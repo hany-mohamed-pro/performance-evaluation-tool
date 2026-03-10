@@ -120,6 +120,12 @@
             monthly: new Date().toISOString().slice(0, 7),
             yearly: new Date().getFullYear().toString()
           });
+          const [timelineFilter, setTimelineFilter] = useState({ start: '', end: '' });
+
+          useEffect(() => {
+              setTimelineFilter({ start: '', end: '' });
+          }, [activePeriod, selectedEmployee]);
+
           const [isExporting, setIsExporting] = useState(false);
           const [showToast, setShowToast] = useState({ show: false, message: '' });
           const [confirmReset, setConfirmReset] = useState(false);
@@ -592,10 +598,11 @@
                 const workbook = new ExcelJS.Workbook();
                 const worksheet = workbook.addWorksheet(`السجل الزمني`, { views: [{ rightToLeft: true }] });
                 const empRecord = assessments?.[selectedEmployee.id]?.[activePeriod] || {};
-                const dates = Object.keys(empRecord).sort((a,b) => new Date(a) - new Date(b));
+                const allDates = Object.keys(empRecord).sort((a,b) => new Date(a) - new Date(b));
+                const dates = allDates.filter(d => (!timelineFilter.start || d >= timelineFilter.start) && (!timelineFilter.end || d <= timelineFilter.end));
                 
                 if(dates.length === 0) { 
-                    displayToast("لا توجد بيانات مسجلة لتصديرها في هذه الفترة."); 
+                    displayToast("لا توجد بيانات مسجلة لتصديرها في هذا النطاق الزمني."); 
                     setIsExporting(false); 
                     return; 
                 }
@@ -609,11 +616,14 @@
 
                 worksheet.getColumn(1).width = 40; 
                 dates.forEach((_, i) => worksheet.getColumn(i + 2).width = 15); 
+                worksheet.getColumn(dates.length + 2).width = 15; // Average
+                worksheet.getColumn(dates.length + 3).width = 15; // Difference
 
                 const periodArabic = activePeriod === 'daily' ? 'يومي' : activePeriod === 'weekly' ? 'أسبوعي' : activePeriod === 'monthly' ? 'شهري' : 'سنوي';
+                const filterText = (timelineFilter.start || timelineFilter.end) ? ` (من ${timelineFilter.start || 'البداية'} إلى ${timelineFilter.end || 'النهاية'})` : '';
                 
-                const titleRow = worksheet.addRow([`السجل الزمني للمقارنة - ${selectedEmployee.name} (${periodArabic})`]);
-                worksheet.mergeCells(`A1:${worksheet.getColumn(dates.length + 1).letter}1`);
+                const titleRow = worksheet.addRow([`السجل الزمني للمقارنة - ${selectedEmployee.name} (${periodArabic})${filterText}`]);
+                worksheet.mergeCells(`A1:${worksheet.getColumn(dates.length + 3).letter}1`);
                 titleRow.height = 35;
                 titleRow.getCell(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF0F172A' } };
                 titleRow.getCell(1).font = { name: 'Arial', size: 14, bold: true, color: { argb: 'FFFFFFFF' } };
@@ -621,15 +631,22 @@
 
                 worksheet.addRow([]).height = 10;
 
-                const headerRow = worksheet.addRow(['المعيار / التواريخ المؤرشفة', ...dates]);
+                const headerRow = worksheet.addRow(['المعيار / التواريخ المؤرشفة', ...dates, 'المتوسط العام', 'التطور (الفارق)']);
                 headerRow.height = 30;
                 headerRow.eachCell((cell, colNum) => {
-                    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: colNum === 1 ? 'FF1E3A8A' : 'FF4F81BD' } };
+                    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: colNum === 1 ? 'FF1E3A8A' : (colNum >= dates.length + 2 ? 'FF334155' : 'FF4F81BD') } };
                     cell.font = { name: 'Arial', size: 11, bold: true, color: { argb: 'FFFFFFFF' } };
                     cell.alignment = { vertical: 'middle', horizontal: 'center' };
                     cell.border = borderStyle;
                 });
                 
+                const getExcelDiff = (first, last) => {
+                    if(!first || !last || dates.length < 2) return '-';
+                    const diff = last - first;
+                    if(diff === 0) return '0.0';
+                    return diff > 0 ? `+${diff.toFixed(1)}` : `${diff.toFixed(1)}`;
+                };
+
                 const addTimelineRow = (label, dataScores, isCategory = false) => {
                    const row = worksheet.addRow([label, ...dataScores]);
                    row.height = 25;
@@ -643,7 +660,17 @@
                            cell.alignment = { vertical: 'middle', horizontal: colNum === 1 ? 'right' : 'center', wrapText: true };
                            if (colNum === 1) {
                                cell.font = { name: 'Arial', size: 10, color: { argb: 'FF000000' } };
-                           } else {
+                           } else if (colNum === dataScores.length + 1) { 
+                               // تنسيق عمود الفارق (آخر عمود)
+                               const diffStr = dataScores[dataScores.length - 1];
+                               if (diffStr && diffStr !== '-' && diffStr !== '0.0') {
+                                   const isPos = diffStr.toString().startsWith('+');
+                                   cell.font = { name: 'Arial', size: 11, bold: true, color: { argb: isPos ? 'FF059669' : 'FFE11D48' } };
+                               } else {
+                                   cell.font = { name: 'Arial', size: 11, color: { argb: 'FF94A3B8' } };
+                               }
+                           } else { 
+                               // تنسيق أعمدة الدرجات والمتوسط
                                const score = dataScores[colNum - 2];
                                if (score && score !== '-') {
                                    let s = parseFloat(score);
@@ -661,22 +688,59 @@
 
                 const reportCriteria = selectedEmployee?.reports?.[activePeriod] || [];
                 let totalExpectedItems = reportCriteria.length;
+                let grandFirstTotal=0, grandFirstCount=0, grandLastTotal=0, grandLastCount=0;
                 
                 if (reportCriteria.length > 0) {
-                    addTimelineRow('التقارير والمهام الإجرائية', Array(dates.length).fill(''), true);
+                    addTimelineRow('التقارير والمهام الإجرائية', Array(dates.length + 2).fill(''), true);
+                    let catFirstTotal=0, catFirstCount=0, catLastTotal=0, catLastCount=0;
+                    
                     reportCriteria.forEach(r => {
                        const scores = dates.map(d => empRecord[d]?.[`reports_${r}`] || '-');
-                       addTimelineRow(r, scores);
+                       
+                       // حساب المتوسط للعمود
+                       let rowTotal=0, rowCount=0;
+                       dates.forEach(d => { const sc = empRecord[d]?.[`reports_${r}`]; if(sc){ rowTotal+=sc; rowCount++; } });
+                       const rowAvg = rowCount > 0 ? (rowTotal/rowCount).toFixed(1) : '-';
+                       
+                       // حساب الفارق
+                       const firstScore = empRecord[dates[0]]?.[`reports_${r}`];
+                       const lastScore = empRecord[dates[dates.length-1]]?.[`reports_${r}`];
+                       if(firstScore){ catFirstTotal+=firstScore; catFirstCount++; grandFirstTotal+=firstScore; grandFirstCount++; }
+                       if(lastScore){ catLastTotal+=lastScore; catLastCount++; grandLastTotal+=lastScore; grandLastCount++; }
+                       const diff = getExcelDiff(firstScore, lastScore);
+
+                       addTimelineRow(r, [...scores, rowAvg, diff]);
                     });
+                    
+                    const catFirstAvg = catFirstCount>0 ? catFirstTotal/catFirstCount : 0;
+                    const catLastAvg = catLastCount>0 ? catLastTotal/catLastCount : 0;
+                    addTimelineRow('متوسط التقارير', [...Array(dates.length).fill(''), '-', getExcelDiff(catFirstAvg, catLastAvg)], true);
                 }
 
                 (selectedEmployee?.competenceFramework || []).forEach(cat => {
                    totalExpectedItems += (cat?.criteria || []).length;
-                   addTimelineRow(cat.category, Array(dates.length).fill(''), true);
+                   addTimelineRow(cat.category, Array(dates.length + 2).fill(''), true);
+                   
+                   let catFirstTotal=0, catFirstCount=0, catLastTotal=0, catLastCount=0;
                    (cat?.criteria || []).forEach(crit => {
                       const scores = dates.map(d => empRecord[d]?.[`${cat.id}_${crit}`] || '-');
-                      addTimelineRow(crit, scores);
+                      
+                      let rowTotal=0, rowCount=0;
+                      dates.forEach(d => { const sc = empRecord[d]?.[`${cat.id}_${crit}`]; if(sc){ rowTotal+=sc; rowCount++; } });
+                      const rowAvg = rowCount > 0 ? (rowTotal/rowCount).toFixed(1) : '-';
+                      
+                      const firstScore = empRecord[dates[0]]?.[`${cat.id}_${crit}`];
+                      const lastScore = empRecord[dates[dates.length-1]]?.[`${cat.id}_${crit}`];
+                      if(firstScore){ catFirstTotal+=firstScore; catFirstCount++; grandFirstTotal+=firstScore; grandFirstCount++; }
+                      if(lastScore){ catLastTotal+=lastScore; catLastCount++; grandLastTotal+=lastScore; grandLastCount++; }
+                      const diff = getExcelDiff(firstScore, lastScore);
+
+                      addTimelineRow(crit, [...scores, rowAvg, diff]);
                    });
+                   
+                   const catFirstAvg = catFirstCount>0 ? catFirstTotal/catFirstCount : 0;
+                   const catLastAvg = catLastCount>0 ? catLastTotal/catLastCount : 0;
+                   addTimelineRow(`متوسط ${cat.category}`, [...Array(dates.length).fill(''), '-', getExcelDiff(catFirstAvg, catLastAvg)], true);
                 });
 
                 const averageRowData = ['المعدل العام لكل تاريخ'];
@@ -688,6 +752,20 @@
                     averageRowData.push(avg > 0 ? parseFloat(avg.toFixed(2)) : '-');
                 });
 
+                // المتوسط العام الكلي والفارق الإجمالي
+                let allTimeTotal=0, allTimeCount=0;
+                dates.forEach(d => {
+                   reportCriteria.forEach(r => { const sc = empRecord[d]?.[`reports_${r}`]; if(sc){ allTimeTotal+=sc; allTimeCount++; } });
+                   (selectedEmployee?.competenceFramework || []).forEach(c => (c?.criteria || []).forEach(cr => { const sc = empRecord[d]?.[`${c.id}_${cr}`]; if(sc){ allTimeTotal+=sc; allTimeCount++; } }));
+                });
+                const finalGrandAvg = allTimeCount>0 ? (allTimeTotal/allTimeCount).toFixed(2) : '-';
+                
+                const grandFirstAvg = grandFirstCount>0 ? grandFirstTotal/grandFirstCount : 0;
+                const grandLastAvg = grandLastCount>0 ? grandLastTotal/grandLastCount : 0;
+                const grandDiff = getExcelDiff(grandFirstAvg, grandLastAvg);
+
+                averageRowData.push(finalGrandAvg, grandDiff);
+
                 worksheet.addRow([]).height = 5; 
                 const avgRow = worksheet.addRow(averageRowData);
                 avgRow.height = 30;
@@ -697,6 +775,14 @@
                     cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE0E7FF' } }; 
                     if (colNum === 1) {
                         cell.font = { name: 'Arial', size: 11, bold: true, color: { argb: 'FF1E3A8A' } };
+                    } else if (colNum === averageRowData.length) {
+                        const diffStr = averageRowData[colNum - 1];
+                        if (diffStr && diffStr !== '-' && diffStr !== '0.0') {
+                            const isPos = diffStr.toString().startsWith('+');
+                            cell.font = { name: 'Arial', size: 12, bold: true, color: { argb: isPos ? 'FF059669' : 'FFE11D48' } };
+                        } else {
+                            cell.font = { name: 'Arial', size: 12, color: { argb: 'FF94A3B8' } };
+                        }
                     } else {
                         const val = averageRowData[colNum - 1];
                         if (val !== '-') {
@@ -1231,26 +1317,69 @@
                     {/* شاشة: السجل الزمني */}
                     {activeView === 'timeline' && (
                       <div className="animate-in fade-in slide-in-from-bottom-4 duration-500 space-y-6 text-right">
-                         <div className="bg-slate-900 rounded-3xl p-3 mb-6 flex flex-col md:flex-row items-center justify-between gap-4 shadow-lg border border-slate-800 print-hidden text-right">
-                           <div className="flex items-center gap-3 w-full md:w-auto overflow-x-auto hide-scrollbar">
-                              <span className="text-xs font-black text-slate-400 uppercase tracking-widest px-3 border-l border-slate-700 whitespace-nowrap"><Icon name="calendar-clock" className="w-4 h-4 inline ml-1"/> مصفوفة السجل:</span>
-                              <div className="flex bg-white/10 p-1 rounded-2xl w-full md:w-auto overflow-x-auto hide-scrollbar">
-                                 {['daily', 'weekly', 'monthly', 'yearly'].map(p => (<button key={p} onClick={() => setActivePeriod(p)} className={`px-5 py-2 rounded-xl flex items-center gap-2 font-bold text-sm transition-all whitespace-nowrap ${activePeriod === p ? 'bg-blue-600 text-white shadow-md' : 'text-slate-400 hover:bg-white/10 hover:text-white'}`}>{p === 'daily' ? 'يومي' : p === 'weekly' ? 'أسبوعي' : p === 'monthly' ? 'شهري' : 'سنوي'}</button>))}
+                         <div className="bg-slate-900 rounded-3xl p-4 md:p-5 mb-6 flex flex-col xl:flex-row items-start xl:items-center justify-between gap-5 shadow-lg border border-slate-800 print-hidden text-right">
+                           <div className="flex flex-col md:flex-row items-start md:items-center gap-4 w-full xl:w-auto">
+                              <div className="flex items-center gap-3 w-full md:w-auto overflow-x-auto hide-scrollbar">
+                                  <span className="text-xs font-black text-slate-400 uppercase tracking-widest px-3 border-l border-slate-700 whitespace-nowrap"><Icon name="calendar-clock" className="w-4 h-4 inline ml-1"/> مصفوفة السجل:</span>
+                                  <div className="flex bg-white/10 p-1 rounded-2xl w-full md:w-auto overflow-x-auto hide-scrollbar">
+                                     {['daily', 'weekly', 'monthly', 'yearly'].map(p => (<button key={p} onClick={() => setActivePeriod(p)} className={`px-5 py-2 rounded-xl flex items-center gap-2 font-bold text-sm transition-all whitespace-nowrap ${activePeriod === p ? 'bg-blue-600 text-white shadow-md' : 'text-slate-400 hover:bg-white/10 hover:text-white'}`}>{p === 'daily' ? 'يومي' : p === 'weekly' ? 'أسبوعي' : p === 'monthly' ? 'شهري' : 'سنوي'}</button>))}
+                                  </div>
                               </div>
+                              
+                              {(() => {
+                                  const allDatesList = Object.keys(assessments?.[selectedEmployee.id]?.[activePeriod] || {}).sort((a,b) => new Date(a) - new Date(b));
+                                  if(allDatesList.length > 0) {
+                                      return (
+                                          <div className="flex items-center gap-2 bg-slate-800 px-4 py-2.5 rounded-2xl border border-white/5 w-full md:w-auto shadow-inner">
+                                              <Icon name="filter" className="w-4 h-4 text-blue-400 shrink-0" />
+                                              <span className="text-[10px] font-black text-slate-400 whitespace-nowrap">من:</span>
+                                              <select value={timelineFilter.start} onChange={e => setTimelineFilter({...timelineFilter, start: e.target.value})} className="bg-transparent text-white text-xs font-bold outline-none cursor-pointer border-none p-0 pr-1">
+                                                  <option value="">أقدم سجل</option>
+                                                  {allDatesList.map(d => <option key={`s-${d}`} value={d} className="bg-slate-800">{d}</option>)}
+                                              </select>
+                                              <span className="text-[10px] font-black text-slate-400 whitespace-nowrap mr-3 border-r border-slate-600 pr-3">إلى:</span>
+                                              <select value={timelineFilter.end} onChange={e => setTimelineFilter({...timelineFilter, end: e.target.value})} className="bg-transparent text-white text-xs font-bold outline-none cursor-pointer border-none p-0 pr-1">
+                                                  <option value="">أحدث سجل</option>
+                                                  {allDatesList.map(d => <option key={`e-${d}`} value={d} className="bg-slate-800">{d}</option>)}
+                                              </select>
+                                          </div>
+                                      );
+                                  }
+                                  return null;
+                              })()}
                            </div>
-                           <button onClick={handleExportTimeline} disabled={isExporting} className="bg-emerald-500 text-white px-5 py-2.5 rounded-xl flex items-center justify-center gap-2 hover:bg-emerald-600 transition-all text-sm font-bold whitespace-nowrap shrink-0 shadow-md w-full md:w-auto">{isExporting ? <Icon name="loader-2" className="w-4 h-4 animate-spin" /> : <Icon name="file-spreadsheet" className="w-4 h-4" />} التصدير الشامل (Excel)</button>
+                           <button onClick={handleExportTimeline} disabled={isExporting} className="bg-emerald-500 text-white px-5 py-3 rounded-xl flex items-center justify-center gap-2 hover:bg-emerald-600 transition-all text-sm font-bold whitespace-nowrap shrink-0 shadow-md w-full xl:w-auto">{isExporting ? <Icon name="loader-2" className="w-4 h-4 animate-spin" /> : <Icon name="file-spreadsheet" className="w-4 h-4" />} التصدير الشامل (Excel)</button>
                          </div>
                          
                          {(() => {
                             const empRecord = assessments?.[selectedEmployee.id]?.[activePeriod] || {};
-                            const dates = Object.keys(empRecord).sort((a,b) => new Date(a) - new Date(b));
+                            const allDates = Object.keys(empRecord).sort((a,b) => new Date(a) - new Date(b));
+                            const dates = allDates.filter(d => (!timelineFilter.start || d >= timelineFilter.start) && (!timelineFilter.end || d <= timelineFilter.end));
                             
-                            if (dates.length === 0) {
+                            const getDiffDisplay = (firstScore, lastScore) => {
+                                if (!firstScore || !lastScore || dates.length < 2) return <span className="text-slate-400 font-bold text-xs">-</span>;
+                                const diff = lastScore - firstScore;
+                                if (diff === 0) return <span className="text-slate-400 font-black text-xs" dir="ltr">0.0</span>;
+                                const color = diff > 0 ? 'text-emerald-500' : 'text-rose-500';
+                                const sign = diff > 0 ? '+' : '';
+                                return <span className={`font-black text-xs flex items-center justify-center gap-0.5 ${color}`} dir="ltr">{sign}{diff.toFixed(1)} <Icon name={diff > 0 ? 'trending-up' : 'trending-down'} className="w-3 h-3" /></span>;
+                            };
+
+                            if (allDates.length === 0) {
                                return (
                                   <div className="bg-white rounded-3xl p-16 text-center border border-slate-200 card-shadow print:border-none print:shadow-none">
                                      <div className="w-20 h-20 bg-slate-50 rounded-2xl flex items-center justify-center mx-auto mb-6 print-hidden border border-slate-100"><Icon name="calendar-x" className="w-10 h-10 text-slate-300" /></div>
                                      <h3 className="text-xl font-black text-slate-600 mb-2">لا توجد سجلات محفوظة لهذه الفترة</h3>
                                      <p className="text-slate-400 text-sm">قم برصد التقييمات في التواريخ المختلفة لتظهر هنا كمصفوفة مقارنة زمنية.</p>
+                                  </div>
+                               )
+                            }
+                            if (dates.length === 0) {
+                               return (
+                                  <div className="bg-white rounded-3xl p-16 text-center border border-slate-200 card-shadow">
+                                     <div className="w-16 h-16 bg-blue-50 rounded-2xl flex items-center justify-center mx-auto mb-4 border border-blue-100"><Icon name="filter-x" className="w-8 h-8 text-blue-300" /></div>
+                                     <h3 className="text-lg font-black text-slate-600 mb-1">لا توجد سجلات في هذا النطاق الزمني</h3>
+                                     <p className="text-slate-400 text-sm">يرجى تعديل فلاتر (من / إلى) لعرض البيانات.</p>
                                   </div>
                                )
                             }
@@ -1268,6 +1397,7 @@
                                               <th className="p-4 whitespace-nowrap sticky right-0 bg-slate-900 print:bg-transparent print:border-r z-20 border-l border-slate-700 shadow-[-5px_0_15px_rgba(0,0,0,0.2)] print:shadow-none text-xs font-black">بنود ومحاور التقييم</th>
                                               {dates.map(d => <th key={d} className="p-4 text-center font-black min-w-[100px] border-l border-slate-800 print:border-slate-300 text-xs">{d}</th>)}
                                               <th className="p-4 text-center font-black min-w-[100px] bg-slate-800 text-blue-200 border-r border-slate-700 text-xs print:bg-slate-300 print:text-slate-900">المتوسط</th>
+                                              <th className="p-4 text-center font-black min-w-[100px] bg-slate-900 text-emerald-400 border-r border-slate-700 text-xs print:bg-slate-300 print:text-slate-900">التطور (الفارق)</th>
                                            </tr>
                                         </thead>
                                         <tbody>
@@ -1287,6 +1417,16 @@
                                                        const allAvg = allCount > 0 ? allTotal/allCount : 0;
                                                        return <td className="p-2.5 text-center font-black text-blue-800 text-xs bg-blue-100/50 border-r border-blue-100 print:bg-slate-100 print:border-slate-300">{allAvg > 0 ? allAvg.toFixed(1) : '-'}</td>
                                                     })()}
+                                                    {(() => {
+                                                        let firstTotal=0, firstCount=0, lastTotal=0, lastCount=0;
+                                                        reportCriteria.forEach(r => { 
+                                                            const sc1 = empRecord[dates[0]]?.[`reports_${r}`]; if(sc1){firstTotal+=sc1; firstCount++;}
+                                                            const sc2 = empRecord[dates[dates.length-1]]?.[`reports_${r}`]; if(sc2){lastTotal+=sc2; lastCount++;}
+                                                        });
+                                                        const firstAvg = firstCount>0 ? firstTotal/firstCount : 0;
+                                                        const lastAvg = lastCount>0 ? lastTotal/lastCount : 0;
+                                                        return <td className="p-2.5 text-center bg-blue-50/80 border-r border-blue-100 print:bg-slate-100 print:border-slate-300">{getDiffDisplay(firstAvg, lastAvg)}</td>;
+                                                    })()}
                                                  </tr>
                                                  {reportCriteria.map(r => {
                                                     let rowTotal = 0; let rowCount = 0;
@@ -1299,6 +1439,7 @@
                                                              return <td key={d} className="p-3 text-center border-l border-slate-50 print:border-slate-200"><span className={`font-black text-sm ${getScoreColor(score)}`}>{score || '-'}</span></td>
                                                           })}
                                                           <td className="p-3 text-center bg-slate-50 border-r border-slate-200 print:bg-slate-100 print:border-slate-300"><span className={`font-black text-sm ${getScoreColor(rowCount > 0 ? rowTotal/rowCount : 0)}`}>{rowCount > 0 ? (rowTotal/rowCount).toFixed(1) : '-'}</span></td>
+                                                          <td className="p-3 text-center bg-slate-50/50 border-r border-slate-200 print:bg-slate-100 print:border-slate-300">{getDiffDisplay(empRecord[dates[0]]?.[`reports_${r}`], empRecord[dates[dates.length-1]]?.[`reports_${r}`])}</td>
                                                        </tr>
                                                     )
                                                  })}
@@ -1320,6 +1461,16 @@
                                                         const allAvg = allCount > 0 ? allTotal/allCount : 0;
                                                         return <td className="p-2.5 text-center font-black text-slate-700 text-xs bg-slate-200/50 border-r border-slate-200 print:bg-slate-100 print:border-slate-300">{allAvg > 0 ? allAvg.toFixed(1) : '-'}</td>
                                                     })()}
+                                                    {(() => {
+                                                        let firstTotal=0, firstCount=0, lastTotal=0, lastCount=0;
+                                                        (cat?.criteria || []).forEach(crit => { 
+                                                            const sc1 = empRecord[dates[0]]?.[`${cat.id}_${crit}`]; if(sc1){firstTotal+=sc1; firstCount++;}
+                                                            const sc2 = empRecord[dates[dates.length-1]]?.[`${cat.id}_${crit}`]; if(sc2){lastTotal+=sc2; lastCount++;}
+                                                        });
+                                                        const firstAvg = firstCount>0 ? firstTotal/firstCount : 0;
+                                                        const lastAvg = lastCount>0 ? lastTotal/lastCount : 0;
+                                                        return <td className="p-2.5 text-center bg-slate-200/80 border-r border-slate-200 print:bg-slate-100 print:border-slate-300">{getDiffDisplay(firstAvg, lastAvg)}</td>;
+                                                    })()}
                                                  </tr>
                                                  {(cat?.criteria || []).map((crit, critIdx) => {
                                                     let rowTotal = 0; let rowCount = 0;
@@ -1332,6 +1483,7 @@
                                                              return <td key={d} className="p-3 text-center border-l border-slate-50 print:border-slate-200"><span className={`font-black text-sm ${getScoreColor(score)}`}>{score || '-'}</span></td>
                                                           })}
                                                           <td className="p-3 text-center bg-slate-50 border-r border-slate-200 print:bg-slate-100 print:border-slate-300"><span className={`font-black text-sm ${getScoreColor(rowCount > 0 ? rowTotal/rowCount : 0)}`}>{rowCount > 0 ? (rowTotal/rowCount).toFixed(1) : '-'}</span></td>
+                                                          <td className="p-3 text-center bg-slate-50/50 border-r border-slate-200 print:bg-slate-100 print:border-slate-300">{getDiffDisplay(empRecord[dates[0]]?.[`${cat.id}_${crit}`], empRecord[dates[dates.length-1]]?.[`${cat.id}_${crit}`])}</td>
                                                        </tr>
                                                     )
                                                  })}
@@ -1341,23 +1493,41 @@
                                            {/* صف المعدل العام داخل الشاشة */}
                                            <tr className="bg-emerald-50/80 border-t-2 border-emerald-200 print:bg-emerald-50 print:border-emerald-600">
                                               <td className="p-4 px-5 font-black text-emerald-900 text-xs sticky right-0 bg-emerald-50/95 backdrop-blur-sm border-l border-emerald-200 z-10 shadow-[-5px_0_10px_rgba(0,0,0,0.02)] print:shadow-none print:bg-transparent">
-                                                 <div className="flex items-center gap-2"><Icon name="calculator" className="w-4 h-4 print-hidden shrink-0" /> المعدل العام للفترة</div>
+                                                 <div className="flex items-center gap-2"><Icon name="calculator" className="w-4 h-4 print-hidden shrink-0" /> المعدل العام للفترة المحددة</div>
                                               </td>
                                               {(() => {
-                                                 let grandTotalOfAverages = 0; let grandCount = 0;
+                                                 let grandFirstTotal=0, grandFirstCount=0, grandLastTotal=0, grandLastCount=0;
+                                                 let allTimeTotal=0, allTimeCount=0;
+
                                                  const dateCells = dates.map(d => {
                                                     let total = 0;
-                                                    reportCriteria.forEach(r => { if(empRecord[d]?.[`reports_${r}`]) total += empRecord[d][`reports_${r}`] });
-                                                    (selectedEmployee.competenceFramework || []).forEach(c => (c?.criteria || []).forEach(cr => { if(empRecord[d]?.[`${c.id}_${cr}`]) total += empRecord[d][`${c.id}_${cr}`] }));
+                                                    reportCriteria.forEach(r => { 
+                                                        const sc = empRecord[d]?.[`reports_${r}`]; 
+                                                        if(sc){ total += sc; allTimeTotal += sc; allTimeCount++; } 
+                                                    });
+                                                    (selectedEmployee.competenceFramework || []).forEach(c => (c?.criteria || []).forEach(cr => { 
+                                                        const sc = empRecord[d]?.[`${c.id}_${cr}`]; 
+                                                        if(sc){ total += sc; allTimeTotal += sc; allTimeCount++; } 
+                                                    }));
+                                                    
                                                     const avg = totalCriteriaCount > 0 ? (total/totalCriteriaCount) : 0;
-                                                    if(avg > 0) { grandTotalOfAverages += avg; grandCount++; }
+                                                    
+                                                    // التقاط بيانات أول وآخر تاريخ
+                                                    if(d === dates[0] && avg > 0){ grandFirstTotal += total; grandFirstCount += totalCriteriaCount; }
+                                                    if(d === dates[dates.length-1] && avg > 0){ grandLastTotal += total; grandLastCount += totalCriteriaCount; }
+
                                                     return <td key={d} className="p-4 text-center border-l border-emerald-100 bg-emerald-50/30 print:bg-transparent print:border-emerald-300"><span className={`font-black text-sm ${getScoreColor(avg)}`}>{avg > 0 ? avg.toFixed(2) : "0.00"}</span></td>
                                                  });
-                                                 const finalGrandAvg = grandCount > 0 ? (grandTotalOfAverages/grandCount) : 0;
+                                                 
+                                                 const finalGrandAvg = allTimeCount > 0 ? (allTimeTotal/allTimeCount) : 0;
+                                                 const firstGrandAvg = grandFirstCount > 0 ? (grandFirstTotal/grandFirstCount) : 0;
+                                                 const lastGrandAvg = grandLastCount > 0 ? (grandLastTotal/grandLastCount) : 0;
+
                                                  return (
                                                     <React.Fragment>
                                                        {dateCells}
                                                        <td className="p-4 text-center bg-emerald-100/50 border-r border-emerald-200 print:bg-emerald-100 print:border-emerald-600"><span className={`font-black text-base ${getScoreColor(finalGrandAvg)}`}>{finalGrandAvg > 0 ? finalGrandAvg.toFixed(2) : "0.00"}</span></td>
+                                                       <td className="p-4 text-center bg-emerald-100/80 border-r border-emerald-200 print:bg-emerald-100 print:border-emerald-600">{getDiffDisplay(firstGrandAvg, lastGrandAvg)}</td>
                                                     </React.Fragment>
                                                  );
                                               })()}
