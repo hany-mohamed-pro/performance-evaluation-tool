@@ -1,0 +1,1392 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>أداة التقييم الشامل للمؤسسات - النسخة الاحترافية</title>
+    
+    <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;800;900&display=swap" rel="stylesheet">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.3.0/exceljs.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
+
+    <style>
+        body { font-family: 'Tajawal', sans-serif; background-color: #F8FAFC; }
+        .hide-scrollbar::-webkit-scrollbar { display: none; }
+        .card-shadow { box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.05); }
+        .animate-pop { animation: pop 0.3s cubic-bezier(0.16, 1, 0.3, 1); }
+        @keyframes pop { 0% { transform: scale(0.98); opacity: 0; } 100% { transform: scale(1); opacity: 1; } }
+        .star-btn { transition: transform 0.2s, color 0.2s; }
+        .star-btn:hover { transform: scale(1.2); }
+        .star-container:hover .star-btn { color: #CBD5E1; }
+        .star-container .star-btn:hover, .star-container .star-btn:hover ~ .star-btn { color: #CBD5E1 !important; }
+        input[type="date"], input[type="week"], input[type="month"], select, textarea {
+            font-family: 'Tajawal', sans-serif;
+            direction: rtl; 
+        }
+        input[type="date"], input[type="week"], input[type="month"] { direction: ltr; text-align: right; }
+
+        @media print {
+            body { background-color: white !important; }
+            .print-hidden { display: none !important; }
+            aside { display: none !important; }
+            main { width: 100% !important; padding: 0 !important; margin: 0 !important; }
+            .card-shadow { box-shadow: none !important; border: 1px solid #e2e8f0 !important; }
+            button, select, input[type="date"], input[type="week"], input[type="month"] { display: none !important; }
+            .print-show { display: block !important; }
+            @page { size: A4 landscape; margin: 1cm; }
+        }
+    </style>
+</head>
+<body class="print:bg-white">
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+
+        // --- المكونات المساعدة العامة ---
+
+        const Icon = ({ name, className }) => {
+            const spanRef = useRef(null);
+            useEffect(() => { 
+                if (spanRef.current) { 
+                    spanRef.current.innerHTML = `<i data-lucide="${name}" class="${className || ''}"></i>`; 
+                    lucide.createIcons({ root: spanRef.current }); 
+                } 
+            }, [name, className]);
+            return <span ref={spanRef} style={{ display: 'contents' }}></span>;
+        };
+
+        const defaultCompetenceFramework = [
+            { 
+              id: 'tech', category: 'الكفاءة المهنية والفنية', 
+              criteria: ['دقة وجودة إنجاز المهام وإعداد التقارير', 'إجادة استخدام الأنظمة والأدوات التقنية المطلوبة', 'الالتزام التام بالسياسات واللوائح المعتمدة', 'التنظيم واكتمال المرفقات وسلامة التوثيق'] 
+            },
+            { 
+              id: 'admin', category: 'الانضباط والاحترافية الإدارية', 
+              criteria: ['الالتزام بمواعيد الحضور والانصراف', 'المظهر المهني العام والالتزام بالزي', 'سرعة الاستجابة للتعاميم والتوجيهات الإدارية', 'جودة التواصل المهني مع الزملاء والعملاء'] 
+            },
+            { 
+              id: 'behavior', category: 'المهارات السلوكية والقيم', 
+              criteria: ['روح التعاون والعمل الجماعي', 'الأمانة والسرية والمحافظة على بيانات العمل', 'المبادرة بتقديم حلول للمشكلات وتطوير الأداء', 'القدرة على العمل تحت الضغط وإدارة الأولويات'] 
+            }
+        ];
+
+        const defaultTeamData = [
+            {
+              id: 'emp_demo', 
+              name: 'موظف تجريبي (قم بتعديلي)', 
+              role: 'محاسب موردين (مثال)', 
+              department: 'الإدارة المالية', 
+              jobDescription: 'مسؤول عن مطابقة فواتير الموردين مع أوامر الشراء وإجراء التسويات وإعداد التقارير اليومية والأسبوعية.',
+              reports: {
+                daily: ['تقرير الفواتير المسجلة', 'تقرير الفواتير المعلقة'],
+                weekly: ['جدول استحقاق الدفعات', 'موقف المطابقات'],
+                monthly: ['مصادقات أرصدة الموردين', 'كشوف التسوية'],
+                yearly: ['تقييم وأرصدة الموردين السنوي']
+              },
+              competenceFramework: JSON.parse(JSON.stringify(defaultCompetenceFramework))
+            }
+        ];
+
+        const getCurrentWeek = () => {
+            const d = new Date();
+            d.setUTCDate(d.getUTCDate() + 4 - (d.getUTCDay()||7));
+            const yearStart = new Date(Date.UTC(d.getUTCFullYear(),0,1));
+            const weekNo = Math.ceil(( ( (d - yearStart) / 86400000) + 1)/7);
+            return d.getUTCFullYear() + "-W" + (weekNo < 10 ? '0' : '') + weekNo;
+        };
+
+        const App = () => {
+          const [selectedEmployee, setSelectedEmployee] = useState(null);
+          const [activePeriod, setActivePeriod] = useState('monthly');
+          const [activeView, setActiveView] = useState('assessment');
+          const [departmentFilter, setDepartmentFilter] = useState('الكل');
+          const [assessments, setAssessments] = useState({});
+          const [teamData, setTeamData] = useState([]);
+          const [settings, setSettings] = useState({
+              companyName: "اسم شركتك / مؤسستك",
+              departments: ["الإدارة العامة", "الإدارة المالية", "الموارد البشرية", "المبيعات", "تقنية المعلومات"],
+              auditorName: "اسم المُقيّم",
+              auditorTitle: "المسمى الوظيفي"
+          });
+          const [dateKeys, setDateKeys] = useState({
+            daily: new Date().toISOString().split('T')[0],
+            weekly: getCurrentWeek(),
+            monthly: new Date().toISOString().slice(0, 7),
+            yearly: new Date().getFullYear().toString()
+          });
+          const [isExporting, setIsExporting] = useState(false);
+          const [showToast, setShowToast] = useState({ show: false, message: '' });
+          const [confirmReset, setConfirmReset] = useState(false);
+          const [isEditingEmployees, setIsEditingEmployees] = useState(false);
+          const [editingEmployee, setEditingEmployee] = useState(null);
+          const [isEditingSettings, setIsEditingSettings] = useState(false);
+          const [showCompanyDashboard, setShowCompanyDashboard] = useState(false);
+
+          const editPaneRef = useRef(null);
+          const settingsDeptsRef = useRef(null);
+
+          // --- التخزين والمزامنة المحصنة ---
+          useEffect(() => {
+            const savedData = localStorage.getItem('assessment_tool_master_stable');
+            if (savedData) {
+              try {
+                  const parsed = JSON.parse(savedData);
+                  if(parsed.assessments) setAssessments(parsed.assessments);
+                  
+                  if(parsed.settings) {
+                      setSettings(prev => ({
+                          ...prev,
+                          ...parsed.settings,
+                          departments: parsed.settings.departments || prev.departments
+                      }));
+                  }
+                  
+                  if(parsed.teamData && parsed.teamData.length > 0) {
+                      const patchedTeam = parsed.teamData.map(emp => ({
+                          ...emp,
+                          name: emp.name || 'موظف بدون اسم',
+                          role: emp.role || '',
+                          department: emp.department || (parsed.settings?.departments?.[0] || 'الإدارة العامة'),
+                          jobDescription: emp.jobDescription || '',
+                          reports: {
+                              daily: emp.reports?.daily || [],
+                              weekly: emp.reports?.weekly || [],
+                              monthly: emp.reports?.monthly || [],
+                              yearly: emp.reports?.yearly || []
+                          },
+                          competenceFramework: (emp.competenceFramework || JSON.parse(JSON.stringify(defaultCompetenceFramework))).map(cat => ({
+                              ...cat,
+                              criteria: cat.criteria || []
+                          }))
+                      }));
+                      setTeamData(patchedTeam);
+                  } else {
+                      setTeamData(defaultTeamData);
+                  }
+              } catch(e) {
+                  console.error("Error parsing data:", e);
+                  setTeamData(defaultTeamData);
+              }
+            } else {
+              setTeamData(defaultTeamData);
+            }
+          }, []);
+
+          useEffect(() => {
+            if (teamData.length > 0) {
+                localStorage.setItem('assessment_tool_master_stable', JSON.stringify({ assessments, teamData, settings }));
+            }
+          }, [assessments, teamData, settings]);
+
+          const displayToast = (message) => {
+              setShowToast({ show: true, message });
+              setTimeout(() => setShowToast({ show: false, message: '' }), 2500);
+          };
+
+          const getScoreColor = (score) => {
+             const s = parseFloat(score);
+             if(!s || s == 0) return 'text-slate-300';
+             if(s <= 2.5) return 'text-rose-500';
+             if(s < 4) return 'text-amber-500';
+             return 'text-emerald-500';
+          };
+
+          const getScore = (empId, period, dateKey, catId, critId) => 
+            assessments?.[empId]?.[period]?.[dateKey]?.[`${catId}_${critId}`] || null;
+
+          const handleRate = (employeeId, category, criterion, score) => {
+            const dateKey = dateKeys[activePeriod];
+            setAssessments(prev => {
+              const newState = { ...prev };
+              if (!newState[employeeId]) newState[employeeId] = {};
+              if (!newState[employeeId][activePeriod]) newState[employeeId][activePeriod] = {};
+              if (!newState[employeeId][activePeriod][dateKey]) newState[employeeId][activePeriod][dateKey] = {};
+              newState[employeeId][activePeriod][dateKey][`${category}_${criterion}`] = score;
+              return newState;
+            });
+            displayToast('تم الحفظ بنجاح');
+          };
+
+          const handleReset = () => {
+            const dateKey = dateKeys[activePeriod];
+            setAssessments(prev => {
+              const newState = { ...prev };
+              if (newState?.[selectedEmployee?.id]?.[activePeriod]?.[dateKey]) {
+                  delete newState[selectedEmployee.id][activePeriod][dateKey];
+              }
+              return newState;
+            });
+            setConfirmReset(false);
+            displayToast('تم مسح التقييم');
+          };
+
+          const calculateCategoryProgress = (empId, period, catId) => {
+            const dateKey = dateKeys[period];
+            const emp = teamData.find(e => e.id === empId);
+            if(!emp) return 0;
+            const criteria = catId === 'reports' ? (emp?.reports?.[period] || []) : (emp?.competenceFramework || []).find(c => c.id === catId)?.criteria || [];
+            let totalPoints = criteria.length * 5;
+            let earnedPoints = 0;
+            criteria.forEach(item => { const score = getScore(empId, period, dateKey, catId, item); if(score) earnedPoints += score; });
+            return totalPoints > 0 ? Math.round((earnedPoints / totalPoints) * 100) : 0;
+          };
+
+          const calculateFormCompletion = (empId, period) => {
+            const dateKey = dateKeys[period];
+            const emp = teamData.find(e => e.id === empId);
+            if (!emp) return 0;
+            let totalCriteria = (emp?.reports?.[period] || []).length;
+            (emp?.competenceFramework || []).forEach(cat => totalCriteria += (cat?.criteria || []).length);
+            
+            if(totalCriteria === 0) return 0;
+
+            let ratedItems = 0;
+            (emp?.reports?.[period] || []).forEach(r => { if(getScore(empId, period, dateKey, 'reports', r)) ratedItems++; });
+            (emp?.competenceFramework || []).forEach(cat => {
+               (cat?.criteria || []).forEach(crit => { if(getScore(empId, period, dateKey, cat.id, crit)) ratedItems++; });
+            });
+            return Math.round((ratedItems / totalCriteria) * 100);
+          };
+
+          const calculateTotalScore = (empId, period) => {
+            const dateKey = dateKeys[period];
+            const emp = teamData.find(e => e.id === empId);
+            if (!emp) return "0.00";
+            
+            let total = 0; 
+            let totalExpectedItems = (emp?.reports?.[period] || []).length;
+            (emp?.competenceFramework || []).forEach(cat => totalExpectedItems += (cat?.criteria || []).length);
+            
+            if (totalExpectedItems === 0) return "0.00";
+
+            (emp?.reports?.[period] || []).forEach(r => { total += (getScore(empId, period, dateKey, 'reports', r) || 0); });
+            (emp?.competenceFramework || []).forEach(cat => (cat?.criteria || []).forEach(crit => { total += (getScore(empId, period, dateKey, cat.id, crit) || 0); }));
+            
+            return (total / totalExpectedItems).toFixed(2);
+          };
+
+          const calculateHistoricalAverage = (empId, period) => {
+             const empRecord = assessments?.[empId]?.[period];
+             if (!empRecord || Object.keys(empRecord).length === 0) return "0.00";
+             
+             let grandTotal = 0; let evaluatedDatesCount = 0;
+             const emp = teamData.find(e => e.id === empId);
+             if(!emp) return "0.00";
+
+             let totalExpectedItems = (emp?.reports?.[period] || []).length;
+             (emp?.competenceFramework || []).forEach(cat => totalExpectedItems += (cat?.criteria || []).length);
+
+             if(totalExpectedItems === 0) return "0.00";
+
+             Object.keys(empRecord).forEach(dateKey => {
+                let dailyTotal = 0;
+                (emp?.reports?.[period] || []).forEach(r => { dailyTotal += (empRecord[dateKey]?.[`reports_${r}`] || 0); });
+                (emp?.competenceFramework || []).forEach(cat => (cat?.criteria || []).forEach(crit => { dailyTotal += (empRecord[dateKey]?.[`${cat.id}_${crit}`] || 0); }));
+                
+                const dateAverage = dailyTotal / totalExpectedItems;
+                if (dateAverage > 0) {
+                    grandTotal += dateAverage;
+                    evaluatedDatesCount++;
+                }
+             });
+             return evaluatedDatesCount > 0 ? (grandTotal / evaluatedDatesCount).toFixed(2) : "0.00";
+          };
+
+          const calculateGrandTotalAverage = (empId) => {
+              let sumOfAverages = 0; let validPeriodsCount = 0;
+              ['daily', 'weekly', 'monthly', 'yearly'].forEach(period => {
+                  const avg = parseFloat(calculateHistoricalAverage(empId, period));
+                  if (avg > 0) { 
+                      sumOfAverages += avg; 
+                      validPeriodsCount++; 
+                  }
+              });
+              return validPeriodsCount > 0 ? (sumOfAverages / validPeriodsCount).toFixed(2) : "0.00";
+          };
+
+          const getHistoricalCategoryAvg = (empId, period, catId) => {
+              const emp = teamData.find(e => e.id === empId);
+              if(!emp) return "0.0";
+              let totalScore = 0; let evalCount = 0;
+              
+              const record = assessments?.[empId]?.[period];
+              if(record) {
+                  Object.keys(record).forEach(dk => {
+                      const criteria = catId === 'reports' ? (emp?.reports?.[period] || []) : (emp?.competenceFramework || []).find(c => c.id === catId)?.criteria || [];
+                      criteria.forEach(crit => { 
+                          const s = record[dk]?.[`${catId}_${crit}`]; 
+                          if(s) { totalScore += s; evalCount++; } 
+                      });
+                  });
+              }
+              return evalCount > 0 ? (totalScore / evalCount).toFixed(1) : "0.0";
+          };
+
+          const getArchivedCount = (empId, period) => Object.keys(assessments?.[empId]?.[period] || {}).length;
+
+          // --- خوارزمية حساب لوحة الشرف المؤسسية ---
+          const getCompanyStats = () => {
+             let empStats = teamData.map(emp => {
+                 return {
+                     ...emp,
+                     score: parseFloat(calculateGrandTotalAverage(emp.id))
+                 };
+             }).filter(e => e.score > 0).sort((a, b) => b.score - a.score);
+
+             let deptMap = {};
+             empStats.forEach(emp => {
+                 if(!deptMap[emp.department]) deptMap[emp.department] = { totalScore: 0, count: 0 };
+                 deptMap[emp.department].totalScore += emp.score;
+                 deptMap[emp.department].count += 1;
+             });
+
+             let deptStats = Object.keys(deptMap).map(dept => ({
+                 department: dept,
+                 score: (deptMap[dept].totalScore / deptMap[dept].count).toFixed(2)
+             })).sort((a, b) => b.score - a.score);
+
+             return { employees: empStats, departments: deptStats };
+          };
+
+          // --- تصدير إكسل (التصميم الاحترافي) ---
+          const handleExportAssessment = async () => {
+            if (!selectedEmployee) return;
+            setIsExporting(true);
+            const dateKey = dateKeys[activePeriod];
+            const periodArabic = activePeriod === 'daily' ? 'يومي' : activePeriod === 'weekly' ? 'أسبوعي' : activePeriod === 'monthly' ? 'شهري' : 'سنوي';
+
+            try {
+              const workbook = new ExcelJS.Workbook();
+              const worksheet = workbook.addWorksheet(`التقييم`, { views: [{ rightToLeft: true }] });
+              
+              worksheet.getColumn(1).width = 30; 
+              worksheet.getColumn(2).width = 65; 
+              worksheet.getColumn(3).width = 25; 
+
+              const borderStyle = {
+                  top: { style: 'thin', color: { argb: 'FFCBD5E1' } },
+                  bottom: { style: 'thin', color: { argb: 'FFCBD5E1' } },
+                  left: { style: 'thin', color: { argb: 'FFCBD5E1' } },
+                  right: { style: 'thin', color: { argb: 'FFCBD5E1' } }
+              };
+
+              const titleRow = worksheet.addRow([`بطاقة تقييم الجدارة والأداء - ${settings.companyName}`]);
+              worksheet.mergeCells('A1:C1');
+              titleRow.height = 35;
+              titleRow.getCell(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF0F172A' } };
+              titleRow.getCell(1).font = { name: 'Arial', size: 14, bold: true, color: { argb: 'FFFFFFFF' } };
+              titleRow.getCell(1).alignment = { vertical: 'middle', horizontal: 'center' };
+
+              const info1 = worksheet.addRow(['اسم الموظف:', selectedEmployee.name, `الفترة المحددة: ${periodArabic}`]);
+              const info2 = worksheet.addRow(['الوظيفة:', selectedEmployee.role, `تاريخ التقييم: ${dateKey}`]);
+              const info3 = worksheet.addRow(['إعداد وتقييم:', `المراجع (${settings.auditorName || 'المدقق الداخلي'})`, '']);
+              
+              [info1, info2, info3].forEach(row => {
+                  row.height = 25;
+                  row.eachCell((cell, colNum) => {
+                      cell.border = borderStyle;
+                      cell.font = { name: 'Arial', size: 11, bold: colNum === 1 || colNum === 3, color: { argb: 'FF000000' } };
+                      cell.alignment = { vertical: 'middle', horizontal: colNum === 3 ? 'left' : 'right' };
+                  });
+              });
+
+              worksheet.addRow([]).height = 10;
+
+              const tableTitle = worksheet.addRow([`جدول تفاصيل الرصد والتقييم لتاريخ (${dateKey})`]);
+              worksheet.mergeCells(`A${tableTitle.number}:C${tableTitle.number}`);
+              tableTitle.height = 30;
+              tableTitle.getCell(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFDBEAFE' } };
+              tableTitle.getCell(1).font = { name: 'Arial', size: 12, bold: true, color: { argb: 'FF1E3A8A' } };
+              tableTitle.getCell(1).alignment = { vertical: 'middle', horizontal: 'center' };
+              tableTitle.getCell(1).border = borderStyle;
+
+              const headerRow = worksheet.addRow(['محور التقييم الرئيسي', 'المعيار / التقرير المطلوب', 'الدرجة الممنوحة (1-5)']);
+              headerRow.height = 30;
+              headerRow.eachCell(cell => {
+                  cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF4F81BD' } };
+                  cell.font = { name: 'Arial', size: 11, bold: true, color: { argb: 'FFFFFFFF' } };
+                  cell.alignment = { vertical: 'middle', horizontal: 'center' };
+                  cell.border = borderStyle;
+              });
+
+              const addDataRow = (category, item, score) => {
+                  const row = worksheet.addRow([category, item, score || '']);
+                  row.height = 25;
+                  row.eachCell((cell, colNum) => {
+                      cell.border = borderStyle;
+                      cell.alignment = { vertical: 'middle', horizontal: colNum === 3 ? 'center' : 'right', wrapText: true };
+                      
+                      if (colNum === 3 && score) {
+                          let s = parseFloat(score);
+                          let color = 'FF059669'; 
+                          if (s <= 2.5) color = 'FFE11D48'; 
+                          else if (s < 4) color = 'FFD97706'; 
+                          cell.font = { name: 'Arial', size: 12, bold: true, color: { argb: color } };
+                      } else {
+                          cell.font = { name: 'Arial', size: 10, color: { argb: 'FF000000' } };
+                      }
+                  });
+              };
+
+              (selectedEmployee?.reports?.[activePeriod] || []).forEach(r => {
+                  const score = getScore(selectedEmployee.id, activePeriod, dateKey, 'reports', r);
+                  addDataRow('المخرجات والتقارير المطلوبة', r, score);
+              });
+
+              (selectedEmployee?.competenceFramework || []).forEach(cat => {
+                  cat.criteria.forEach(crit => {
+                      const score = getScore(selectedEmployee.id, activePeriod, dateKey, cat.id, crit);
+                      let catName = cat.category;
+                      if(cat.id === 'tech') catName = 'الكفاءة الفنية والنظامية';
+                      addDataRow(catName, crit, score);
+                  });
+              });
+
+              const finalScore = calculateTotalScore(selectedEmployee.id, activePeriod);
+              const totalRow = worksheet.addRow(['المعدل العام للجدارة في هذا التاريخ', '', finalScore]);
+              worksheet.mergeCells(`A${totalRow.number}:B${totalRow.number}`);
+              totalRow.height = 35;
+              
+              totalRow.getCell(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE0E7FF' } };
+              totalRow.getCell(1).font = { name: 'Arial', size: 12, bold: true, color: { argb: 'FF1E3A8A' } };
+              totalRow.getCell(1).alignment = { vertical: 'middle', horizontal: 'right' };
+              totalRow.getCell(1).border = borderStyle;
+              
+              const scoreCell = totalRow.getCell(3);
+              scoreCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE0E7FF' } };
+              scoreCell.border = borderStyle;
+              scoreCell.alignment = { vertical: 'middle', horizontal: 'center' };
+              
+              let fScore = parseFloat(finalScore);
+              let finalColor = 'FF059669'; 
+              if (fScore == 0) finalColor = 'FF94A3B8';
+              else if (fScore <= 2.5) finalColor = 'FFE11D48';
+              else if (fScore < 4) finalColor = 'FFD97706';
+              scoreCell.font = { name: 'Arial', size: 16, bold: true, color: { argb: finalColor } };
+
+              const buffer = await workbook.xlsx.writeBuffer();
+              saveAs(new Blob([buffer]), `بطاقة_تقييم_${selectedEmployee.name}_${dateKey}.xlsx`);
+            } catch (e) { 
+              console.error(e); 
+            } finally { 
+              setIsExporting(false); 
+            }
+          };
+
+          const handleExportSummary = async () => {
+             if (!selectedEmployee) return;
+             setIsExporting(true);
+             try {
+                const workbook = new ExcelJS.Workbook();
+                const worksheet = workbook.addWorksheet(`الملخص التحليلي`, { views: [{ rightToLeft: true }] });
+                worksheet.getColumn(1).width = 40; worksheet.getColumn(2).width = 25;
+                
+                const borderStyle = {
+                    top: { style: 'thin', color: { argb: 'FFCBD5E1' } },
+                    bottom: { style: 'thin', color: { argb: 'FFCBD5E1' } },
+                    left: { style: 'thin', color: { argb: 'FFCBD5E1' } },
+                    right: { style: 'thin', color: { argb: 'FFCBD5E1' } }
+                };
+
+                const titleRow = worksheet.addRow([`ملخص الأداء التحليلي - ${settings.companyName}`]);
+                worksheet.mergeCells('A1:B1');
+                titleRow.height = 35;
+                titleRow.getCell(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF0F172A' } };
+                titleRow.getCell(1).font = { name: 'Arial', size: 14, bold: true, color: { argb: 'FFFFFFFF' } };
+                titleRow.getCell(1).alignment = { vertical: 'middle', horizontal: 'center' };
+
+                const info1 = worksheet.addRow(['اسم الموظف:', selectedEmployee.name]);
+                const info2 = worksheet.addRow(['الوظيفة:', selectedEmployee.role]);
+                const info3 = worksheet.addRow(['تاريخ الإصدار:', new Date().toISOString().split('T')[0]]);
+                
+                [info1, info2, info3].forEach(row => {
+                    row.height = 25;
+                    row.eachCell((cell, colNum) => {
+                        cell.border = borderStyle;
+                        cell.font = { name: 'Arial', size: 11, bold: colNum === 1, color: { argb: 'FF000000' } };
+                        cell.alignment = { vertical: 'middle', horizontal: colNum === 1 ? 'right' : 'center' };
+                    });
+                });
+
+                worksheet.addRow([]).height = 10;
+
+                const grandTotal = calculateGrandTotalAverage(selectedEmployee.id);
+                const grandTotalRow = worksheet.addRow(['المعدل العام التراكمي الشامل', grandTotal]);
+                grandTotalRow.height = 35;
+                grandTotalRow.getCell(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE0E7FF' } };
+                grandTotalRow.getCell(1).font = { name: 'Arial', size: 12, bold: true, color: { argb: 'FF1E3A8A' } };
+                grandTotalRow.getCell(1).alignment = { vertical: 'middle', horizontal: 'right' };
+                grandTotalRow.getCell(1).border = borderStyle;
+                
+                const gScoreCell = grandTotalRow.getCell(2);
+                gScoreCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE0E7FF' } };
+                gScoreCell.border = borderStyle;
+                gScoreCell.alignment = { vertical: 'middle', horizontal: 'center' };
+                let gScore = parseFloat(grandTotal);
+                let gColor = 'FF059669'; 
+                if (gScore == 0) gColor = 'FF94A3B8';
+                else if (gScore <= 2.5) gColor = 'FFE11D48';
+                else if (gScore < 4) gColor = 'FFD97706';
+                gScoreCell.font = { name: 'Arial', size: 16, bold: true, color: { argb: gColor } };
+
+                worksheet.addRow([]).height = 10;
+
+                const headerRow = worksheet.addRow(['الفترة / المحور', 'المتوسط التاريخي']);
+                headerRow.height = 30;
+                headerRow.eachCell(cell => { 
+                    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF4F81BD' } };
+                    cell.font = { name: 'Arial', size: 11, bold: true, color: { argb: 'FFFFFFFF' } };
+                    cell.alignment = { vertical: 'middle', horizontal: 'center' };
+                    cell.border = borderStyle;
+                });
+
+                const addSummaryRow = (label, value) => {
+                    const row = worksheet.addRow([label, value]);
+                    row.height = 25;
+                    row.eachCell((cell, colNum) => {
+                        cell.border = borderStyle;
+                        cell.alignment = { vertical: 'middle', horizontal: colNum === 1 ? 'right' : 'center' };
+                        if (colNum === 2) {
+                            let s = parseFloat(value);
+                            let color = 'FF059669'; 
+                            if (s == 0) color = 'FF94A3B8';
+                            else if (s <= 2.5) color = 'FFE11D48'; 
+                            else if (s < 4) color = 'FFD97706'; 
+                            cell.font = { name: 'Arial', size: 12, bold: true, color: { argb: color } };
+                        } else {
+                            cell.font = { name: 'Arial', size: 11, color: { argb: 'FF000000' } };
+                        }
+                    });
+                };
+
+                worksheet.addRow(['المتوسطات حسب الفترات الزمنية', '']).eachCell(c => { c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFDBEAFE' }}; c.font = {bold: true, color: {argb: 'FF1E3A8A'}}; c.border=borderStyle; });
+                ['daily', 'weekly', 'monthly', 'yearly'].forEach(p => {
+                    addSummaryRow(
+                        `متوسط ${p === 'daily' ? 'يومي' : p === 'weekly' ? 'أسبوعي' : p === 'monthly' ? 'شهري' : 'سنوي'} (أرشفة: ${getArchivedCount(selectedEmployee.id, p)} تقييم)`,
+                        calculateHistoricalAverage(selectedEmployee.id, p)
+                    );
+                });
+
+                const periodArabic = activePeriod === 'daily' ? 'اليومي' : activePeriod === 'weekly' ? 'الأسبوعي' : activePeriod === 'monthly' ? 'الشهري' : 'السنوي';
+                worksheet.addRow([`المتوسطات حسب محاور التقييم (للسجل ${periodArabic})`, '']).eachCell(c => { c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFDBEAFE' }}; c.font = {bold: true, color: {argb: 'FF1E3A8A'}}; c.border=borderStyle; });
+                addSummaryRow('جودة التقارير والمهام المنجزة', getHistoricalCategoryAvg(selectedEmployee.id, activePeriod, 'reports'));
+                (selectedEmployee?.competenceFramework || []).forEach(cat => {
+                    addSummaryRow(cat.category, getHistoricalCategoryAvg(selectedEmployee.id, activePeriod, cat.id));
+                });
+
+                const buffer = await workbook.xlsx.writeBuffer();
+                saveAs(new Blob([buffer]), `ملخص_أداء_${selectedEmployee.name}.xlsx`);
+             } catch (e) { console.error(e); } finally { setIsExporting(false); }
+          };
+
+          const handleExportTimeline = async () => {
+             if (!selectedEmployee) return;
+             setIsExporting(true);
+             try {
+                const workbook = new ExcelJS.Workbook();
+                const worksheet = workbook.addWorksheet(`السجل الزمني`, { views: [{ rightToLeft: true }] });
+                const empRecord = assessments?.[selectedEmployee.id]?.[activePeriod] || {};
+                const dates = Object.keys(empRecord).sort((a,b) => new Date(a) - new Date(b));
+                
+                if(dates.length === 0) { 
+                    displayToast("لا توجد بيانات مسجلة لتصديرها في هذه الفترة."); 
+                    setIsExporting(false); 
+                    return; 
+                }
+                
+                const borderStyle = {
+                    top: { style: 'thin', color: { argb: 'FFCBD5E1' } },
+                    bottom: { style: 'thin', color: { argb: 'FFCBD5E1' } },
+                    left: { style: 'thin', color: { argb: 'FFCBD5E1' } },
+                    right: { style: 'thin', color: { argb: 'FFCBD5E1' } }
+                };
+
+                worksheet.getColumn(1).width = 40; 
+                dates.forEach((_, i) => worksheet.getColumn(i + 2).width = 15); 
+
+                const periodArabic = activePeriod === 'daily' ? 'يومي' : activePeriod === 'weekly' ? 'أسبوعي' : activePeriod === 'monthly' ? 'شهري' : 'سنوي';
+                
+                const titleRow = worksheet.addRow([`السجل الزمني للمقارنة - ${selectedEmployee.name} (${periodArabic})`]);
+                worksheet.mergeCells(`A1:${worksheet.getColumn(dates.length + 1).letter}1`);
+                titleRow.height = 35;
+                titleRow.getCell(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF0F172A' } };
+                titleRow.getCell(1).font = { name: 'Arial', size: 14, bold: true, color: { argb: 'FFFFFFFF' } };
+                titleRow.getCell(1).alignment = { vertical: 'middle', horizontal: 'center' };
+
+                worksheet.addRow([]).height = 10;
+
+                const headerRow = worksheet.addRow(['المعيار / التواريخ المؤرشفة', ...dates]);
+                headerRow.height = 30;
+                headerRow.eachCell((cell, colNum) => {
+                    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: colNum === 1 ? 'FF1E3A8A' : 'FF4F81BD' } };
+                    cell.font = { name: 'Arial', size: 11, bold: true, color: { argb: 'FFFFFFFF' } };
+                    cell.alignment = { vertical: 'middle', horizontal: 'center' };
+                    cell.border = borderStyle;
+                });
+                
+                const addTimelineRow = (label, dataScores, isCategory = false) => {
+                   const row = worksheet.addRow([label, ...dataScores]);
+                   row.height = 25;
+                   row.eachCell((cell, colNum) => {
+                       cell.border = borderStyle;
+                       if (isCategory) {
+                           cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFDBEAFE' } };
+                           cell.font = { name: 'Arial', size: 11, bold: true, color: { argb: 'FF1E3A8A' } };
+                           cell.alignment = { vertical: 'middle', horizontal: colNum === 1 ? 'right' : 'center' };
+                       } else {
+                           cell.alignment = { vertical: 'middle', horizontal: colNum === 1 ? 'right' : 'center', wrapText: true };
+                           if (colNum === 1) {
+                               cell.font = { name: 'Arial', size: 10, color: { argb: 'FF000000' } };
+                           } else {
+                               const score = dataScores[colNum - 2];
+                               if (score && score !== '-') {
+                                   let s = parseFloat(score);
+                                   let color = 'FF059669'; 
+                                   if (s <= 2.5) color = 'FFE11D48'; 
+                                   else if (s < 4) color = 'FFD97706'; 
+                                   cell.font = { name: 'Arial', size: 11, bold: true, color: { argb: color } };
+                               } else {
+                                   cell.font = { name: 'Arial', size: 11, color: { argb: 'FF94A3B8' } };
+                               }
+                           }
+                       }
+                   });
+                };
+
+                const reportCriteria = selectedEmployee?.reports?.[activePeriod] || [];
+                let totalExpectedItems = reportCriteria.length;
+                
+                if (reportCriteria.length > 0) {
+                    addTimelineRow('التقارير والمهام الإجرائية', Array(dates.length).fill(''), true);
+                    reportCriteria.forEach(r => {
+                       const scores = dates.map(d => empRecord[d]?.[`reports_${r}`] || '-');
+                       addTimelineRow(r, scores);
+                    });
+                }
+
+                (selectedEmployee?.competenceFramework || []).forEach(cat => {
+                   totalExpectedItems += (cat?.criteria || []).length;
+                   addTimelineRow(cat.category, Array(dates.length).fill(''), true);
+                   (cat?.criteria || []).forEach(crit => {
+                      const scores = dates.map(d => empRecord[d]?.[`${cat.id}_${crit}`] || '-');
+                      addTimelineRow(crit, scores);
+                   });
+                });
+
+                const averageRowData = ['المعدل العام لكل تاريخ'];
+                dates.forEach(d => {
+                    let dailyTotal = 0;
+                    reportCriteria.forEach(r => { dailyTotal += (empRecord[d]?.[`reports_${r}`] || 0); });
+                    (selectedEmployee?.competenceFramework || []).forEach(cat => (cat?.criteria || []).forEach(crit => { dailyTotal += (empRecord[d]?.[`${cat.id}_${crit}`] || 0); }));
+                    const avg = totalExpectedItems > 0 ? (dailyTotal / totalExpectedItems) : 0;
+                    averageRowData.push(avg > 0 ? parseFloat(avg.toFixed(2)) : '-');
+                });
+
+                worksheet.addRow([]).height = 5; 
+                const avgRow = worksheet.addRow(averageRowData);
+                avgRow.height = 30;
+                avgRow.eachCell((cell, colNum) => {
+                    cell.border = borderStyle;
+                    cell.alignment = { vertical: 'middle', horizontal: colNum === 1 ? 'right' : 'center' };
+                    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE0E7FF' } }; 
+                    if (colNum === 1) {
+                        cell.font = { name: 'Arial', size: 11, bold: true, color: { argb: 'FF1E3A8A' } };
+                    } else {
+                        const val = averageRowData[colNum - 1];
+                        if (val !== '-') {
+                             let color = 'FF059669';
+                             if (val <= 2.5) color = 'FFE11D48';
+                             else if (val < 4) color = 'FFD97706';
+                             cell.font = { name: 'Arial', size: 12, bold: true, color: { argb: color } };
+                        } else {
+                             cell.font = { name: 'Arial', size: 12, color: { argb: 'FF94A3B8' } };
+                        }
+                    }
+                });
+
+                const buffer = await workbook.xlsx.writeBuffer();
+                saveAs(new Blob([buffer]), `سجل_مقارنة_${selectedEmployee.name}.xlsx`);
+             } catch (e) { console.error(e); } finally { setIsExporting(false); }
+          };
+
+          // --- محرك الاستنتاج الذكي (المرن والشامل لجميع الإدارات) ---
+          const autoSuggestReports = () => {
+              const dept = editingEmployee.department || 'الإدارة العامة';
+              const role = editingEmployee.role || 'موظف';
+              const desc = editingEmployee.jobDescription || '';
+              const fullText = `${dept} ${role} ${desc}`.toLowerCase();
+
+              const baseAdminBehavior = [
+                  { id: 'admin', category: 'الانضباط والاحترافية الإدارية', criteria: ['الالتزام بمواعيد الحضور والانصراف', 'المظهر المهني العام والالتزام بالزي', 'سرعة الاستجابة للتعاميم والتوجيهات الإدارية', 'جودة التواصل المهني مع الزملاء والعملاء'] },
+                  { id: 'behavior', category: 'المهارات السلوكية والقيم', criteria: ['روح التعاون والعمل الجماعي', 'الأمانة والسرية والمحافظة على بيانات العمل', 'المبادرة بتقديم حلول للمشكلات وتطوير الأداء', 'القدرة على العمل تحت الضغط وإدارة الأولويات'] }
+              ];
+
+              let customCriteria = []; let customReports = { daily: [], weekly: [], monthly: [], yearly: [] };
+              const techKeywords = ['odoo', 'sap', 'oracle', 'excel', 'اكسل', 'erp', 'نظام', 'دفاتر', 'قيود'];
+              let foundTech = techKeywords.filter(kw => fullText.includes(kw));
+              if (foundTech.length > 0) customCriteria.push(`الاحترافية في استخدام أنظمة (${foundTech.map(t=>t.toUpperCase()).join(' و ')}) لإنجاز المهام`);
+              else customCriteria.push(`إجادة استخدام الأنظمة والأدوات التقنية المطلوبة للوظيفة`);
+
+              // NLP Parsing لاستخراج المهام والتقارير من النص المدخل
+              if (desc.length > 5) {
+                  const phrases = desc.split(/[،.,\n-]/).map(p => p.trim()).filter(p => p.length > 5);
+                  phrases.forEach(phrase => {
+                      if (/(متابعة|إدارة|إعداد|مراجعة|مطابقة|تسوية|تحليل|تسجيل|تطوير|إشراف|تنسيق|تنفيذ)/i.test(phrase)) {
+                          let cleanPhrase = phrase.replace(/يتولى|يقوم بـ|مسؤول عن/g, '').trim();
+                          if (!cleanPhrase.includes('تقرير') && customCriteria.length < 8) {
+                              customCriteria.push(`الدقة والجودة العالية في: ${cleanPhrase}`);
+                          }
+                      }
+                      if (/(تقرير|كشف|قائمة|بيان|ميزان|سجل|نموذج|مؤشر)/i.test(phrase)) {
+                          let repName = phrase.replace(/يجب|يلتزم بـ|إعداد/g, '').trim();
+                          if(repName.length > 50) repName = repName.substring(0, 50) + '...';
+                          
+                          if (phrase.includes('يومي') && customReports.daily.length < 5) customReports.daily.push(repName);
+                          else if ((phrase.includes('اسبوعي') || phrase.includes('أسبوعي')) && customReports.weekly.length < 5) customReports.weekly.push(repName);
+                          else if (phrase.includes('سنوي') && customReports.yearly.length < 5) customReports.yearly.push(repName);
+                          else if (customReports.monthly.length < 5) customReports.monthly.push(repName);
+                      }
+                  });
+              }
+
+              const knowledgeBase = [
+                  { keywords: ['مورد', 'مشتريات', 'ap', 'دفع', 'دائن'], category: 'الكفاءة المهنية (المشتريات والموردين)', criteria: ['دقة مطابقة فواتير الموردين', 'الالتزام بسياسات الصرف المعتمدة'], reports: { daily: ['تقرير الفواتير المسجلة', 'تقرير الفواتير المعلقة'], weekly: ['جدول استحقاق الدفعات'], monthly: ['مصادقات الموردين'], yearly: ['تقييم الموردين السنوي'] } },
+                  { keywords: ['عملاء', 'تحصيل', 'ar', 'مبيعات', 'مدين'], category: 'الكفاءة المهنية (العملاء والتحصيل)', criteria: ['الدقة في تسجيل التحصيلات والحد من الديون', 'المهارة في متابعة الحسابات المدينة'], reports: { daily: ['تقرير التحصيلات اليومية', 'تقرير المبيعات'], weekly: ['تقرير أعمار الديون الأسبوعي'], monthly: ['مصادقات العملاء'], yearly: ['تحليل الديون السنوي'] } },
+                  { keywords: ['مخزون', 'مستودع', 'تكاليف', 'أصناف', 'جرد'], category: 'الكفاءة المهنية (المخزون والتكاليف)', criteria: ['الدقة في تسجيل حركات الصرف والإضافة', 'القدرة على تحليل انحرافات الجرد'], reports: { daily: ['حركات المخزون اليومية'], weekly: ['تقرير الأصناف دون حد الطلب'], monthly: ['تقرير فروقات الجرد الشهري'], yearly: ['التقرير الختامي للجرد السنوي'] } },
+                  { keywords: ['رواتب', 'hr', 'موارد', 'شؤون', 'توظيف', 'موظف'], category: 'الكفاءة المهنية (الموارد البشرية)', criteria: ['الدقة في إعداد المسيرات ومطابقة البيانات', 'المعرفة باللوائح وقوانين العمل'], reports: { daily: ['تقرير الحضور والانصراف', 'متابعة الإجازات'], weekly: ['مؤشر التوظيف'], monthly: ['مسير الرواتب الشهري', 'تقرير الدوران الوظيفي'], yearly: ['تقييم الأداء السنوي'] } },
+                  { keywords: ['تسويق', 'حملات', 'إعلان', 'سوشيال'], category: 'الكفاءة المهنية (التسويق والمبيعات)', criteria: ['قياس العائد على الاستثمار في الحملات', 'إدارة ميزانية التسويق بفعالية'], reports: { daily: ['تقرير المبيعات اليومي'], weekly: ['أداء الحملات التسويقية'], monthly: ['تقرير حصة السوق'], yearly: ['خطة التسويق السنوية'] } },
+                  { keywords: ['تقنية', 'it', 'شبكات', 'دعم فني'], category: 'الكفاءة المهنية (تقنية المعلومات)', criteria: ['سرعة حل الأعطال الفنية', 'ضمان استقرار الشبكة والأنظمة'], reports: { daily: ['سجل التذاكر اليومية'], weekly: ['تقرير النسخ الاحتياطي'], monthly: ['صيانة الأجهزة'], yearly: ['تحديث البنية التحتية'] } }
+              ];
+
+              let bestMatch = null; let highestScore = 0;
+              knowledgeBase.forEach(profile => {
+                  let score = 0; profile.keywords.forEach(kw => { if (fullText.includes(kw)) score++; });
+                  if (score > highestScore) { highestScore = score; bestMatch = profile; }
+              });
+
+              let finalCategory = `الكفاءة الفنية (${role || dept || 'العامة'})`;
+              let finalCriteria = [...customCriteria];
+              let finalReports = { daily: [...customReports.daily], weekly: [...customReports.weekly], monthly: [...customReports.monthly], yearly: [...customReports.yearly] };
+
+              if (bestMatch && highestScore > 0) {
+                  finalCategory = bestMatch.category;
+                  finalCriteria = [...customCriteria, ...bestMatch.criteria];
+                  finalReports.daily = [...finalReports.daily, ...bestMatch.reports.daily];
+                  finalReports.weekly = [...finalReports.weekly, ...bestMatch.reports.weekly];
+                  finalReports.monthly = [...finalReports.monthly, ...bestMatch.reports.monthly];
+                  finalReports.yearly = [...finalReports.yearly, ...bestMatch.reports.yearly];
+              }
+
+              if (finalCriteria.length <= 1) finalCriteria.push('دقة وجودة إنجاز المهام المطلوبة', 'الالتزام بالسياسات واللوائح المعتمدة');
+              if (finalReports.daily.length === 0 && finalReports.weekly.length === 0 && finalReports.monthly.length === 0) {
+                  finalReports.daily.push('سجل إنجاز المهام اليومية');
+                  finalReports.weekly.push('تقرير متابعة الأهداف الأسبوعي');
+                  finalReports.monthly.push('التقرير الإداري الشهري');
+                  finalReports.yearly.push('التقرير السنوي الشامل');
+              }
+
+              const mergeUnique = (arr1, arr2, limit) => [...new Set([...(arr1 || []), ...(arr2 || [])])].filter(Boolean).slice(0, limit);
+
+              setEditingEmployee({
+                  ...editingEmployee,
+                  reports: {
+                      daily: mergeUnique(finalReports.daily, [], 4),
+                      weekly: mergeUnique(finalReports.weekly, [], 4),
+                      monthly: mergeUnique(finalReports.monthly, [], 4),
+                      yearly: mergeUnique(finalReports.yearly, [], 4)
+                  },
+                  competenceFramework: [{ id: `cat_${Date.now()}`, category: finalCategory, criteria: mergeUnique(finalCriteria, [], 6) }, ...baseAdminBehavior]
+              });
+              displayToast('✨ تم الاستنتاج الذكي بنجاح');
+          };
+
+          const handleSaveEmployee = (e) => {
+              e.preventDefault();
+              if(!editingEmployee?.name || !editingEmployee?.role) { displayToast('أكمل البيانات'); return; }
+              if(editingEmployee.isNew) {
+                  setTeamData([...teamData, { ...editingEmployee, id: `emp_${Date.now()}` }]);
+                  displayToast('تمت الإضافة');
+              } else {
+                  setTeamData(teamData.map(x => x.id === editingEmployee.id ? editingEmployee : x));
+                  if(selectedEmployee?.id === editingEmployee.id) setSelectedEmployee(editingEmployee);
+                  displayToast('تم التحديث');
+              }
+              setEditingEmployee(null);
+          };
+
+          const filteredTeam = departmentFilter === 'الكل' ? teamData : teamData.filter(emp => emp.department === departmentFilter);
+
+          const openEditPane = (empData) => {
+             setEditingEmployee(empData);
+             if (editPaneRef.current) {
+                 editPaneRef.current.scrollTop = 0;
+             }
+          };
+
+          // --- واجهات الإدارة والإعدادات ---
+          if (showCompanyDashboard) {
+              const stats = getCompanyStats();
+              return (
+                  <div className="min-h-screen bg-slate-50 p-4 md:p-6 font-sans" dir="rtl">
+                      <div className="max-w-6xl mx-auto bg-white rounded-3xl shadow-xl overflow-hidden border border-slate-200 animate-pop">
+                          <div className="p-6 border-b border-slate-200 bg-slate-900 text-white flex justify-between items-center sticky top-0 z-20 shadow-md">
+                              <div>
+                                  <h2 className="text-xl md:text-2xl font-black flex items-center gap-2"><Icon name="bar-chart-2" className="w-5 h-5 text-emerald-400" /> لوحة الأداء المؤسسي (EPM)</h2>
+                                  <p className="text-slate-400 text-sm mt-1">نظرة تحليلية شاملة لتحديد الموظفين والإدارات المثالية بناءً على المتوسطات التراكمية</p>
+                              </div>
+                              <button onClick={() => setShowCompanyDashboard(false)} className="bg-white/10 hover:bg-white/20 px-4 py-2 rounded-xl text-sm font-bold flex items-center gap-2 transition-all border border-white/5">العودة للنظام <Icon name="arrow-left" className="w-4 h-4" /></button>
+                          </div>
+                          
+                          <div className="p-6 md:p-10 bg-slate-50 overflow-y-auto max-h-[calc(100vh-120px)] space-y-10">
+                              
+                              {/* قسم الإدارة المثالية */}
+                              <div>
+                                  <h3 className="text-xl font-black text-slate-800 mb-6 flex items-center gap-2 border-b border-slate-200 pb-2"><Icon name="award" className="w-6 h-6 text-amber-500" /> ترتيب الإدارات (الإدارة المثالية)</h3>
+                                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
+                                      {stats.departments.map((dept, index) => (
+                                          <div key={index} className={`p-6 rounded-2xl border ${index === 0 ? 'bg-gradient-to-br from-amber-50 to-orange-100 border-amber-200 shadow-md ring-1 ring-amber-300 transform scale-105 z-10' : 'bg-white border-slate-200 shadow-sm'}`}>
+                                              <div className="flex justify-between items-start mb-4">
+                                                  <span className={`w-8 h-8 rounded-full flex items-center justify-center font-black text-sm ${index === 0 ? 'bg-amber-500 text-white shadow-lg' : 'bg-slate-100 text-slate-500'}`}>#{index + 1}</span>
+                                                  {index === 0 && <Icon name="trophy" className="w-6 h-6 text-amber-500 animate-pulse" />}
+                                              </div>
+                                              <h4 className="text-lg font-black text-slate-800 mb-1 truncate">{dept.department}</h4>
+                                              <p className="text-xs text-slate-500 font-bold mb-4 uppercase tracking-widest">متوسط تقييم الإدارة</p>
+                                              <div className="flex items-baseline gap-1">
+                                                  <span className={`text-4xl font-black ${getScoreColor(dept.score)}`}>{dept.score}</span><span className="text-sm text-slate-400 font-bold">/ 5</span>
+                                              </div>
+                                          </div>
+                                      ))}
+                                      {stats.departments.length === 0 && <div className="col-span-full p-8 text-center text-slate-400 font-bold">لا توجد بيانات كافية للحساب بعد.</div>}
+                                  </div>
+                              </div>
+
+                              {/* قسم الموظف المثالي */}
+                              <div>
+                                  <h3 className="text-xl font-black text-slate-800 mb-6 flex items-center gap-2 border-b border-slate-200 pb-2"><Icon name="medal" className="w-6 h-6 text-blue-500" /> ترتيب الموظفين (الموظف المثالي)</h3>
+                                  <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm">
+                                      <table className="w-full text-right">
+                                          <thead className="bg-slate-100 border-b border-slate-200">
+                                              <tr>
+                                                  <th className="p-4 font-black text-slate-600 w-16 text-center">المركز</th>
+                                                  <th className="p-4 font-black text-slate-600">اسم الموظف</th>
+                                                  <th className="p-4 font-black text-slate-600 hidden md:table-cell">المسمى الوظيفي</th>
+                                                  <th className="p-4 font-black text-slate-600 hidden sm:table-cell">الإدارة</th>
+                                                  <th className="p-4 font-black text-slate-600 text-center">المعدل العام</th>
+                                              </tr>
+                                          </thead>
+                                          <tbody className="divide-y divide-slate-100">
+                                              {stats.employees.map((emp, index) => (
+                                                  <tr key={emp.id} className={`hover:bg-slate-50 transition-colors ${index === 0 ? 'bg-blue-50/30' : ''}`}>
+                                                      <td className="p-4 text-center">
+                                                          {index === 0 ? (
+                                                              <div className="w-8 h-8 bg-blue-500 text-white rounded-full flex items-center justify-center mx-auto shadow-md"><Icon name="star" className="w-4 h-4 fill-current" /></div>
+                                                          ) : (
+                                                              <span className="font-bold text-slate-400">{index + 1}</span>
+                                                          )}
+                                                      </td>
+                                                      <td className="p-4 font-black text-slate-800">{emp.name}</td>
+                                                      <td className="p-4 text-sm font-bold text-slate-500 hidden md:table-cell">{emp.role}</td>
+                                                      <td className="p-4 hidden sm:table-cell"><span className="bg-slate-100 px-2 py-1 rounded text-xs font-bold text-slate-600">{emp.department}</span></td>
+                                                      <td className="p-4 text-center">
+                                                          <span className={`text-xl font-black ${getScoreColor(emp.score)}`}>{emp.score.toFixed(2)}</span>
+                                                      </td>
+                                                  </tr>
+                                              ))}
+                                              {stats.employees.length === 0 && <tr><td colSpan="5" className="p-8 text-center text-slate-400 font-bold">لا توجد تقييمات مسجلة للموظفين حتى الآن.</td></tr>}
+                                          </tbody>
+                                      </table>
+                                  </div>
+                              </div>
+
+                          </div>
+                      </div>
+                  </div>
+              );
+          }
+
+          if (isEditingEmployees) {
+              return (
+                  <div className="min-h-screen bg-slate-50 p-4 md:p-6 font-sans" dir="rtl">
+                     <div className="max-w-5xl mx-auto bg-white rounded-3xl shadow-xl overflow-hidden border border-slate-200 animate-pop">
+                        <div className="p-5 md:p-6 border-b border-slate-200 bg-slate-900 text-white flex justify-between items-center sticky top-0 z-20 shadow-md">
+                            <div>
+                                <h2 className="text-xl md:text-2xl font-black flex items-center gap-2"><Icon name="users-cog" className="w-5 h-5 text-blue-400" /> إدارة الموظفين والتقارير</h2>
+                            </div>
+                            <button onClick={() => {setIsEditingEmployees(false); setEditingEmployee(null);}} className="bg-white/10 hover:bg-white/20 px-3 md:px-4 py-2 rounded-xl text-xs md:text-sm font-bold flex items-center gap-2 transition-all border border-white/5">العودة للنظام <Icon name="arrow-left" className="w-4 h-4" /></button>
+                        </div>
+                        <div className="flex flex-col md:flex-row h-[calc(100vh-120px)]">
+                            <div className="w-full md:w-1/3 border-l border-slate-200 p-4 md:p-6 bg-slate-50 overflow-y-auto">
+                                <button onClick={() => openEditPane({ isNew: true, name: '', role: '', department: settings?.departments?.[0] || '', jobDescription: '', reports: { daily: [], weekly: [], monthly: [], yearly: [] }, competenceFramework: JSON.parse(JSON.stringify(defaultCompetenceFramework)) })} className="w-full bg-blue-600 text-white px-4 py-3 rounded-xl font-bold mb-6 flex justify-center items-center gap-2 hover:bg-blue-700 shadow-md transition-all active:scale-95 text-sm"><Icon name="user-plus" className="w-4 h-4" /> إضافة موظف جديد</button>
+                                <div className="space-y-3">
+                                    {(teamData || []).map(emp => (
+                                        <div key={emp.id} className={`p-4 rounded-xl border cursor-pointer transition-all flex justify-between items-center group ${editingEmployee?.id === emp.id ? 'border-blue-500 bg-white shadow-md ring-1 ring-blue-500' : 'border-slate-200 bg-white hover:border-blue-300'}`}>
+                                            <div onClick={() => openEditPane(JSON.parse(JSON.stringify(emp)))} className="flex-1 text-right">
+                                               <h3 className="font-bold text-sm text-slate-800">{emp.name}</h3>
+                                               <p className="text-xs text-slate-500 mt-0.5">{emp.role}</p>
+                                            </div>
+                                            <button onClick={(e) => { e.stopPropagation(); if(window.confirm('هل أنت متأكد من حذف الموظف؟')) { setTeamData(teamData.filter(x => x.id !== emp.id)); if(selectedEmployee?.id === emp.id) setSelectedEmployee(null); displayToast('تم الحذف'); } }} className="text-slate-400 hover:text-rose-500 opacity-0 group-hover:opacity-100 p-2 rounded-lg hover:bg-rose-50 transition-colors"><Icon name="trash-2" className="w-4 h-4" /></button>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                            <div className="w-full md:w-2/3 p-4 md:p-6 overflow-y-auto bg-white scroll-smooth" ref={editPaneRef}>
+                                {editingEmployee ? (
+                                    <form onSubmit={handleSaveEmployee} className="space-y-6 pb-10">
+                                        <div className="bg-slate-50 p-5 md:p-6 rounded-2xl border border-slate-200 shadow-sm text-right text-slate-800">
+                                            <h4 className="font-black text-slate-800 mb-4 border-b border-slate-200 pb-2 flex items-center gap-2 text-sm"><Icon name="user" className="w-4 h-4 text-blue-500" /> البيانات الوظيفية الأساسية</h4>
+                                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                                <div><label className="block text-xs font-bold text-slate-500 mb-1">اسم الموظف</label><input required type="text" value={editingEmployee?.name || ''} onChange={e => setEditingEmployee({...editingEmployee, name: e.target.value})} className="w-full p-2.5 text-sm rounded-xl border border-slate-300 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 text-right transition-all" /></div>
+                                                <div><label className="block text-xs font-bold text-slate-500 mb-1">المسمى الوظيفي</label><input required type="text" value={editingEmployee?.role || ''} onChange={e => setEditingEmployee({...editingEmployee, role: e.target.value})} className="w-full p-2.5 text-sm rounded-xl border border-slate-300 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 text-right transition-all" /></div>
+                                                <div className="md:col-span-2"><label className="block text-xs font-bold text-slate-500 mb-1">الإدارة</label><select required value={editingEmployee?.department || ''} onChange={e => setEditingEmployee({...editingEmployee, department: e.target.value})} className="w-full p-2.5 text-sm rounded-xl border border-slate-300 bg-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all">{(settings?.departments || []).map(dep => <option key={dep} value={dep}>{dep}</option>)}</select></div>
+                                                <div className="md:col-span-2 mt-2"><label className="block text-xs font-bold text-slate-500 mb-1">الوصف الوظيفي (يستخدم للاستنتاج الذكي)</label><textarea value={editingEmployee?.jobDescription || ''} onChange={e => setEditingEmployee({...editingEmployee, jobDescription: e.target.value})} className="w-full p-3 text-sm rounded-xl border border-slate-300 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 text-right min-h-[80px] leading-relaxed transition-all" placeholder="مثال: مسؤول عن مطابقة كشوف الحسابات والتسويات البنكية..." /><button type="button" onClick={autoSuggestReports} className="mt-3 flex items-center gap-2 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 px-4 py-2.5 rounded-xl transition-all shadow-sm w-full justify-center active:scale-95"><Icon name="sparkles" className="w-4 h-4 text-indigo-200" /> استنتاج التقارير والمعايير تلقائياً من الوصف</button></div>
+                                            </div>
+                                        </div>
+                                        <div className="bg-slate-50 p-5 md:p-6 rounded-2xl border border-slate-200 shadow-sm text-right">
+                                           <h4 className="font-black text-slate-800 mb-4 border-b border-slate-200 pb-2 flex items-center gap-2 text-sm"><Icon name="file-text" className="w-4 h-4 text-blue-500" /> التقارير المطلوبة</h4>
+                                           {['daily', 'weekly', 'monthly', 'yearly'].map(p => (<div key={p} className="mb-4 bg-white p-3 rounded-xl border border-slate-100"><div className="flex justify-between items-center mb-2"><span className="text-xs font-black text-slate-600 bg-slate-100 px-2 py-1 rounded">{p === 'daily' ? 'يومي' : p === 'weekly' ? 'أسبوعي' : p === 'monthly' ? 'شهري' : 'سنوي'}</span><button type="button" onClick={() => { const currentLen = (editingEmployee?.reports?.[p] || []).length; setEditingEmployee({...editingEmployee, reports: {...editingEmployee.reports, [p]: [...(editingEmployee?.reports?.[p] || []), '']}}); setTimeout(() => { const el = document.getElementById(`report-input-${p}-${currentLen}`); if(el) { el.scrollIntoView({behavior: 'smooth', block: 'center'}); el.focus(); } }, 100); }} className="text-[11px] text-blue-600 font-bold bg-blue-50 px-2 py-1 rounded hover:bg-blue-100 transition-colors">+ إضافة تقرير</button></div>{(editingEmployee?.reports?.[p] || []).map((rep, idx) => (<div key={idx} className="flex gap-2 mb-1.5"><input id={`report-input-${p}-${idx}`} type="text" value={rep || ''} onChange={e => { const r = [...editingEmployee.reports[p]]; r[idx] = e.target.value; setEditingEmployee({...editingEmployee, reports: {...editingEmployee.reports, [p]: r}}); }} className="flex-1 p-2 rounded-lg border border-slate-300 text-xs text-right focus:border-blue-500 outline-none" required /><button type="button" onClick={() => { const r = [...editingEmployee.reports[p]]; r.splice(idx,1); setEditingEmployee({...editingEmployee, reports: {...editingEmployee.reports, [p]: r}}); }} className="text-rose-400 hover:text-rose-600 p-1 bg-rose-50 rounded-lg transition-colors"><Icon name="x" className="w-4 h-4" /></button></div>))}</div>))}
+                                        </div>
+                                        <div className="bg-slate-50 p-5 md:p-6 rounded-2xl border border-slate-200 text-right shadow-sm"><div className="flex justify-between items-center mb-4 border-b border-slate-200 pb-2"><h4 className="font-black text-slate-800 flex items-center gap-2 text-sm"><Icon name="award" className="w-4 h-4 text-emerald-500" /> معايير الجدارة والسلوك</h4><button type="button" onClick={() => { const currentLen = (editingEmployee?.competenceFramework || []).length; setEditingEmployee({...editingEmployee, competenceFramework: [...(editingEmployee?.competenceFramework || []), { id: `cat_${Date.now()}`, category: '', criteria: [] }]}); setTimeout(() => { const el = document.getElementById(`cat-input-${currentLen}`); if(el) { el.scrollIntoView({behavior: 'smooth', block: 'center'}); el.focus(); } }, 100); }} className="text-[11px] bg-emerald-50 text-emerald-700 font-bold px-2 py-1 rounded hover:bg-emerald-100 transition-colors">+ إضافة محور تقييم</button></div>{(editingEmployee?.competenceFramework || []).map((cat, ci) => (<div key={ci} className="bg-white p-4 rounded-xl border border-slate-200 mb-4 shadow-sm text-right"><div className="flex gap-2 mb-3"><input id={`cat-input-${ci}`} required type="text" value={cat?.category || ''} placeholder="اسم المحور (مثال: الكفاءة الفنية)" onChange={e => { const f = [...(editingEmployee?.competenceFramework || [])]; f[ci].category = e.target.value; setEditingEmployee({...editingEmployee, competenceFramework: f}); }} className="flex-1 p-2 rounded-lg border border-slate-300 text-sm font-bold text-right focus:border-emerald-500 outline-none" /><button type="button" onClick={() => { const f = [...(editingEmployee?.competenceFramework || [])]; f.splice(ci,1); setEditingEmployee({...editingEmployee, competenceFramework: f}); }} className="text-rose-400 hover:text-rose-600 p-2 bg-rose-50 rounded-lg"><Icon name="trash-2" className="w-4 h-4" /></button></div>{(cat?.criteria || []).map((cr, cri) => (<div key={cri} className="flex gap-2 mb-1.5"><input id={`crit-input-${ci}-${cri}`} required type="text" placeholder="معيار التقييم..." value={cr || ''} onChange={e => { const f = [...(editingEmployee?.competenceFramework || [])]; f[ci].criteria[cri] = e.target.value; setEditingEmployee({...editingEmployee, competenceFramework: f}); }} className="flex-1 p-2 rounded-lg border border-slate-200 text-xs text-right focus:border-emerald-500 outline-none" /><button type="button" onClick={() => { const f = [...(editingEmployee?.competenceFramework || [])]; f[ci].criteria.splice(cri,1); setEditingEmployee({...editingEmployee, competenceFramework: f}); }} className="text-slate-400 hover:text-slate-600 p-1 bg-slate-100 rounded-lg"><Icon name="x" className="w-4 h-4" /></button></div>))}<button type="button" onClick={() => { const f = [...(editingEmployee?.competenceFramework || [])]; if(!f[ci].criteria) f[ci].criteria = []; const currentLen = f[ci].criteria.length; f[ci].criteria.push(''); setEditingEmployee({...editingEmployee, competenceFramework: f}); setTimeout(() => { const el = document.getElementById(`crit-input-${ci}-${currentLen}`); if(el) { el.scrollIntoView({behavior: 'smooth', block: 'center'}); el.focus(); } }, 100); }} className="text-[11px] text-emerald-600 font-bold mt-2 hover:underline">+ إضافة معيار فرعي</button></div>))}</div>
+                                        <button type="submit" className="w-full bg-slate-900 text-white font-black py-4 rounded-xl shadow-xl hover:bg-slate-800 transition-all sticky bottom-4 z-10 flex items-center justify-center gap-2 text-sm"><Icon name="save" className="w-4 h-4" /> حفظ التعديلات وإغلاق الملف</button>
+                                    </form>
+                                ) : ( <div className="h-full flex flex-col items-center justify-center text-slate-400 py-20 bg-slate-50/50 rounded-2xl border border-slate-200 border-dashed"><Icon name="user-check" className="w-16 h-16 mb-4 text-slate-300" /><p className="text-lg font-bold">الرجاء اختيار موظف للتعديل أو إضافة جديد</p></div> )}
+                            </div>
+                        </div>
+                     </div>
+                  </div>
+              )
+          }
+
+          if (isEditingSettings) {
+             return (
+                  <div className="min-h-screen bg-slate-50 p-4 md:p-6 flex items-center justify-center font-sans" dir="rtl">
+                     <div className="max-w-2xl w-full bg-white rounded-3xl shadow-xl overflow-hidden border border-slate-200 animate-pop text-right">
+                        <div className="p-5 md:p-6 border-b border-slate-200 bg-slate-900 text-white flex justify-between items-center sticky top-0 z-10 shadow-md">
+                            <div>
+                               <h2 className="text-xl md:text-2xl font-black flex items-center gap-2"><Icon name="settings" className="w-5 h-5 md:w-6 md:h-6 text-blue-400" /> إعدادات النظام</h2>
+                               <p className="text-slate-400 text-xs md:text-sm mt-1 hidden sm:block">تخصيص الهوية الإدارية وبناء الهيكل التنظيمي</p>
+                            </div>
+                            <button onClick={() => setIsEditingSettings(false)} className="bg-white/10 hover:bg-white/20 px-3 md:px-4 py-2 rounded-xl text-xs md:text-sm font-bold flex items-center gap-2 transition-all border border-white/5">العودة للنظام <Icon name="arrow-left" className="w-4 h-4" /></button>
+                        </div>
+                        <form onSubmit={(e) => { e.preventDefault(); setIsEditingSettings(false); displayToast('تم الحفظ'); }} className="p-6 md:p-8 space-y-6 bg-slate-50/50">
+                             <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                                 <div className="md:col-span-2 text-right"><label className="block text-xs font-bold text-slate-700 mb-1">اسم المؤسسة (يظهر في التقارير)</label><input required type="text" value={settings?.companyName || ''} onChange={e => setSettings({...settings, companyName: e.target.value})} className="w-full p-3 rounded-xl border border-slate-300 text-right font-bold text-sm focus:border-blue-500 outline-none transition-all shadow-sm" /></div>
+                                 <div className="text-right"><label className="block text-xs font-bold text-slate-700 mb-1">اسم المقيّم / المدقق</label><input required type="text" value={settings?.auditorName || ''} onChange={e => setSettings({...settings, auditorName: e.target.value})} className="w-full p-3 rounded-xl border border-slate-300 text-right text-sm focus:border-blue-500 outline-none transition-all shadow-sm" /></div>
+                                 <div className="text-right"><label className="block text-xs font-bold text-slate-700 mb-1">المسمى الوظيفي</label><input required type="text" value={settings?.auditorTitle || ''} onChange={e => setSettings({...settings, auditorTitle: e.target.value})} className="w-full p-3 rounded-xl border border-slate-300 text-right text-sm focus:border-blue-500 outline-none transition-all shadow-sm" /></div>
+                             </div>
+                             <div className="text-right bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
+                                 <div className="flex justify-between items-center mb-4 border-b border-slate-100 pb-2"><h3 className="text-sm font-black text-slate-800 flex items-center gap-2"><Icon name="network" className="w-4 h-4 text-blue-500" /> إدارة الإدارات والأقسام</h3><button type="button" onClick={() => { const newDepts = [...(settings.departments||[]), 'إدارة جديدة']; setSettings({...settings, departments: newDepts}); setTimeout(() => { const el = document.getElementById(`dept-input-${newDepts.length - 1}`); if(el) { el.scrollIntoView({behavior: 'smooth', block: 'center'}); el.focus(); } else if(settingsDeptsRef.current) settingsDeptsRef.current.scrollTop = settingsDeptsRef.current.scrollHeight; }, 100); }} className="text-[11px] bg-emerald-50 text-emerald-700 font-bold px-3 py-1.5 rounded-lg hover:bg-emerald-100 transition-colors">+ إضافة قسم</button></div>
+                                 <div className="space-y-2 max-h-48 overflow-y-auto pr-2 hide-scrollbar scroll-smooth" ref={settingsDeptsRef}>
+                                     {(settings?.departments || []).map((dep, idx) => (
+                                         <div key={idx} className="flex gap-2"><input id={`dept-input-${idx}`} required type="text" value={dep || ''} onChange={e => { const d = [...settings.departments]; d[idx] = e.target.value; setSettings({...settings, departments: d}); }} className="flex-1 p-2.5 rounded-lg border border-slate-300 text-right font-bold text-sm focus:border-blue-500 outline-none" /><button type="button" onClick={() => { const d = [...settings.departments]; d.splice(idx,1); setSettings({...settings, departments: d}); }} className="p-2.5 bg-rose-50 text-rose-500 hover:bg-rose-100 hover:text-rose-600 rounded-lg transition-colors"><Icon name="trash-2" className="w-4 h-4" /></button></div>
+                                     ))}
+                                 </div>
+                             </div>
+                             <button type="submit" className="w-full bg-slate-900 text-white font-black py-4 rounded-xl shadow-xl hover:bg-slate-800 transition-all flex justify-center items-center gap-2 text-sm"><Icon name="check-circle-2" className="w-4 h-4" /> حفظ الإعدادات</button>
+                        </form>
+                     </div>
+                  </div>
+             )
+          }
+
+          // --- الواجهة الرئيسية ---
+          return (
+            <div className="min-h-screen flex flex-col lg:flex-row overflow-hidden bg-[#F8FAFC] text-right" dir="rtl">
+              
+              <div className={`fixed top-6 left-1/2 -translate-x-1/2 bg-slate-900 text-emerald-400 px-6 py-3 rounded-full shadow-2xl flex items-center gap-3 z-50 transition-all duration-300 print-hidden ${showToast.show ? 'translate-y-0 opacity-100' : '-translate-y-20 opacity-0'}`}>
+                 <Icon name="check-circle" className="w-5 h-5" />
+                 <span className="font-bold text-sm">{showToast.message}</span>
+              </div>
+
+              <aside className="w-full lg:w-72 bg-slate-900 text-white flex flex-col border-l border-white/5 shadow-2xl z-20 h-screen sticky top-0 print-hidden">
+                <div className="p-5 border-b border-white/10 flex items-center justify-between bg-slate-800/50">
+                   <div className="flex items-center gap-3 text-right">
+                      <div className="w-10 h-10 bg-blue-600 rounded-xl flex items-center justify-center shadow-lg"><Icon name="activity" className="w-5 h-5 text-white" /></div>
+                      <div>
+                        <h2 className="text-lg font-black leading-none tracking-tight">أداة التقييم الشامل</h2>
+                        <p className="text-blue-400 text-[10px] font-black uppercase mt-1.5 line-clamp-1">{settings?.companyName}</p>
+                      </div>
+                   </div>
+                   <button onClick={() => setIsEditingSettings(true)} className="text-slate-400 hover:text-white hover:bg-white/10 p-2 rounded-lg transition-colors" title="إعدادات النظام"><Icon name="settings" className="w-4 h-4" /></button>
+                </div>
+
+                <div className="flex-1 overflow-y-auto hide-scrollbar p-5 flex flex-col text-right">
+                  <div className="mb-5">
+                      <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-2">فرز الإدارة</label>
+                      <select value={departmentFilter} onChange={(e) => { setDepartmentFilter(e.target.value); setSelectedEmployee(null); }} className="w-full bg-slate-800 text-white text-sm p-3 rounded-xl border border-slate-700 outline-none focus:border-blue-500 cursor-pointer font-bold shadow-inner">
+                          <option value="الكل">جميع الإدارات</option>
+                          {(settings?.departments || []).map(dep => <option key={dep} value={dep}>{dep}</option>)}
+                      </select>
+                  </div>
+                  <div className="flex justify-between items-center mb-3 border-b border-white/5 pb-2">
+                      <p className="text-xs font-black text-slate-400 uppercase tracking-widest">{departmentFilter === 'الكل' ? 'فريق العمل' : `فريق ${departmentFilter}`}</p>
+                      <button onClick={() => setIsEditingEmployees(true)} className="text-blue-400 hover:text-white text-[10px] bg-white/5 px-2 py-1 rounded-lg flex items-center gap-1 transition-colors font-bold border border-white/5"><Icon name="edit-3" className="w-3 h-3" /> إدارة</button>
+                  </div>
+                  <div className="space-y-2">
+                      {(filteredTeam || []).map(emp => (
+                        <button key={emp.id} onClick={() => { setSelectedEmployee(emp); setActiveView('assessment'); }} className={`w-full p-3 rounded-xl flex items-center gap-3 transition-all border text-right ${selectedEmployee?.id === emp.id ? 'bg-blue-600 border-blue-400 shadow-lg scale-[1.02]' : 'bg-white/5 border-transparent hover:bg-white/10'}`}>
+                          <div className={`w-10 h-10 rounded-lg shrink-0 flex items-center justify-center font-black text-base ${selectedEmployee?.id === emp.id ? 'bg-white text-blue-600 shadow-inner' : 'bg-slate-800 text-slate-300'}`}>{emp?.name?.charAt(0) || ''}</div>
+                          <div className="flex-1 min-w-0 text-right">
+                            <p className="font-bold text-sm truncate">{emp.name}</p>
+                            <div className="flex flex-col mt-0.5">
+                                <p className={`text-[10px] truncate font-medium ${selectedEmployee?.id === emp.id ? 'text-blue-100' : 'text-slate-400'}`}>{emp.role}</p>
+                                {departmentFilter === 'الكل' && (
+                                    <span className={`text-[9px] mt-1 w-fit px-1.5 py-0.5 rounded font-black ${selectedEmployee?.id === emp.id ? 'bg-white/20 text-white' : 'bg-slate-800 text-slate-400'} border border-white/5`}>
+                                        {emp.department}
+                                    </span>
+                                )}
+                            </div>
+                          </div>
+                        </button>
+                      ))}
+                  </div>
+                </div>
+
+                <div className="p-5 border-t border-white/10 mt-auto bg-slate-900/80 text-center">
+                   <div className="bg-slate-800 border border-slate-700 rounded-2xl p-4 w-full shadow-lg flex flex-col items-center">
+                       <div className="flex items-center justify-center gap-1.5 mb-2">
+                           <Icon name="heart-handshake" className="w-4 h-4 text-emerald-400" />
+                           <p className="text-emerald-400 text-xs font-black">صدقة جارية</p>
+                       </div>
+                       <p className="text-slate-300 text-[10px] font-bold mb-4 leading-relaxed text-center opacity-80">أسألكم الدعاء بظاهر الغيب</p>
+                       <a href="https://www.linkedin.com/in/hany-mohamed-98687352/" target="_blank" rel="noopener noreferrer" className="flex items-center justify-center gap-2 bg-[#0A66C2] text-white py-2.5 px-3 rounded-lg hover:bg-[#004182] transition-colors text-[11px] font-black w-full shadow-md">
+                           <Icon name="linkedin" className="w-3.5 h-3.5 shrink-0" /> إعداد وتصميم: هاني محمد
+                       </a>
+                   </div>
+                </div>
+              </aside>
+
+              <main className="flex-1 overflow-y-auto p-4 md:p-6 lg:p-8 relative w-full text-right bg-slate-50/50">
+                
+                <div className="flex flex-wrap gap-3 mb-6 print-hidden justify-center lg:justify-start">
+                    <button onClick={() => setShowCompanyDashboard(true)} className="bg-gradient-to-l from-emerald-500 to-teal-600 text-white border border-emerald-600 px-5 py-2.5 rounded-xl font-bold flex items-center justify-center gap-2 hover:scale-105 transition-transform shadow-md text-sm"><Icon name="bar-chart-2" className="w-4 h-4" /> لوحة الأداء المؤسسي</button>
+                    <button onClick={() => setIsEditingEmployees(true)} className="bg-white text-slate-700 border border-slate-200 px-5 py-2.5 rounded-xl font-bold flex items-center justify-center gap-2 hover:bg-blue-50 hover:text-blue-600 hover:border-blue-200 transition-all shadow-sm text-sm"><Icon name="users" className="w-4 h-4" /> إدارة فريق العمل</button>
+                    <button onClick={() => setIsEditingSettings(true)} className="bg-white text-slate-700 border border-slate-200 px-5 py-2.5 rounded-xl font-bold flex items-center justify-center gap-2 hover:bg-blue-50 hover:text-blue-600 hover:border-blue-200 transition-all shadow-sm text-sm"><Icon name="settings" className="w-4 h-4" /> إعدادات المؤسسة</button>
+                </div>
+
+                {selectedEmployee ? (
+                  <div className="max-w-6xl mx-auto animate-pop pb-10">
+                    
+                    {/* رأس صفحة الموظف */}
+                    <div className="bg-white rounded-3xl p-6 md:p-8 border border-slate-200 mb-6 shadow-sm card-shadow relative overflow-hidden print:border-b-2 print:border-slate-800 print:shadow-none print:rounded-none print:p-0 print:mb-4">
+                       <div className="flex flex-col md:flex-row justify-between gap-6 md:items-center text-right relative z-10">
+                          <div className="flex items-center gap-5">
+                             <div className="w-16 h-16 shrink-0 bg-slate-900 text-white rounded-2xl flex items-center justify-center text-3xl font-black shadow-lg print:hidden">{selectedEmployee?.name?.charAt(0) || ''}</div>
+                             <div className="text-right">
+                                <h3 className="text-2xl md:text-3xl font-black text-slate-900 tracking-tight mb-2 flex items-center gap-2">
+                                   {selectedEmployee?.name}
+                                   <button onClick={() => { setIsEditingEmployees(true); openEditPane(JSON.parse(JSON.stringify(selectedEmployee))); }} className="text-slate-300 hover:text-blue-600 transition-colors print-hidden p-1 rounded hover:bg-blue-50" title="تعديل بيانات الموظف"><Icon name="edit-3" className="w-4 h-4" /></button>
+                                </h3>
+                                <div className="flex items-center gap-2 flex-wrap">
+                                   <p className="text-slate-600 font-bold text-base md:text-lg">{selectedEmployee?.role}</p>
+                                   <span className="text-slate-300 hidden sm:inline">|</span> 
+                                   <button onClick={() => setIsEditingSettings(true)} className="text-blue-700 bg-blue-50 px-3 py-1 rounded-md text-xs font-black border border-blue-100 hover:bg-blue-100 hover:underline transition-all print:border-none print:bg-transparent print:p-0 print:text-sm" title="إدارة الأقسام والإعدادات">
+                                      {selectedEmployee?.department}
+                                   </button>
+                                </div>
+                             </div>
+                          </div>
+                          <div className="flex p-1.5 bg-slate-100/80 rounded-2xl w-full md:w-auto overflow-x-auto hide-scrollbar print-hidden border border-slate-200/50 shadow-inner">
+                             {[{id:'assessment', label:'رصد التقييم', icon:'file-edit'}, {id:'summary', label:'ملخص الأداء', icon:'bar-chart-2'}, {id:'timeline', label:'السجل الزمني', icon:'calendar-days'}].map(tab => (
+                                <button key={tab.id} onClick={() => setActiveView(tab.id)} className={`px-5 py-2.5 rounded-xl font-bold text-sm flex-1 md:flex-none flex items-center justify-center gap-2 transition-all whitespace-nowrap ${activeView === tab.id ? 'bg-white text-blue-700 shadow-sm border border-slate-200/50 scale-100' : 'text-slate-500 hover:text-slate-800 hover:bg-slate-200/30 scale-95'}`}><Icon name={tab.icon} className="w-4 h-4" /> {tab.label}</button>
+                             ))}
+                          </div>
+                       </div>
+                    </div>
+
+                    {/* شاشة: رصد التقييم */}
+                    {activeView === 'assessment' && (
+                      <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
+                        <div className="bg-slate-900 rounded-3xl p-3 mb-6 flex flex-col md:flex-row items-center justify-between gap-4 shadow-lg border border-slate-800 print-hidden">
+                           <div className="flex bg-white/10 p-1 rounded-2xl w-full md:w-auto overflow-x-auto hide-scrollbar">
+                             {['daily', 'weekly', 'monthly', 'yearly'].map(p => (<button key={p} onClick={() => setActivePeriod(p)} className={`px-5 py-2 rounded-xl flex items-center gap-2 font-bold text-sm transition-all whitespace-nowrap ${activePeriod === p ? 'bg-blue-600 text-white shadow-md' : 'text-slate-400 hover:bg-white/10 hover:text-white'}`}>{p === 'daily' ? 'يومي' : p === 'weekly' ? 'أسبوعي' : p === 'monthly' ? 'شهري' : 'سنوي'}</button>))}
+                           </div>
+                           <div className="flex items-center gap-3 bg-slate-800 px-5 py-2 rounded-2xl border border-white/5 w-full md:w-auto shadow-inner">
+                              <Icon name="calendar-search" className="w-5 h-5 text-blue-400 shrink-0" />
+                              <div className="flex flex-col text-right">
+                                 <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-0.5">تاريخ التقييم</span>
+                                 {activePeriod === 'daily' && <input type="date" value={dateKeys.daily} onChange={(e) => setDateKeys({...dateKeys, daily: e.target.value})} className="bg-transparent text-white font-bold text-sm outline-none cursor-pointer" />}
+                                 {activePeriod === 'weekly' && <input type="week" value={dateKeys.weekly} onChange={(e) => setDateKeys({...dateKeys, weekly: e.target.value})} className="bg-transparent text-white font-bold text-sm outline-none cursor-pointer" />}
+                                 {activePeriod === 'monthly' && <input type="month" value={dateKeys.monthly} onChange={(e) => setDateKeys({...dateKeys, monthly: e.target.value})} className="bg-transparent text-white font-bold text-sm outline-none cursor-pointer" />}
+                                 {activePeriod === 'yearly' && <select value={dateKeys.yearly} onChange={(e) => setDateKeys({...dateKeys, yearly: e.target.value})} className="bg-slate-800 text-white font-bold text-sm outline-none cursor-pointer border-none">{[2024, 2025, 2026, 2027].map(y => <option key={y} value={y}>{y}</option>)}</select>}
+                              </div>
+                           </div>
+                           <div className="flex gap-2 w-full md:w-auto">
+                               <button onClick={handleExportAssessment} disabled={isExporting} className="flex-1 md:flex-none bg-emerald-500 text-white px-5 py-2.5 rounded-xl flex items-center justify-center gap-2 hover:bg-emerald-600 transition-all font-bold text-sm shadow-md shadow-emerald-500/20">{isExporting ? <Icon name="loader-2" className="w-4 h-4 animate-spin" /> : <Icon name="file-spreadsheet" className="w-4 h-4" />} التصدير (Excel)</button>
+                               {confirmReset ? (
+                                  <div className="flex gap-1 w-full md:w-auto animate-in zoom-in duration-200">
+                                     <button onClick={handleReset} className="flex-1 bg-rose-500 text-white px-4 py-2.5 rounded-xl text-xs font-bold hover:bg-rose-600 transition-all shadow-sm flex items-center justify-center gap-1"><Icon name="check" className="w-3 h-3" />تأكيد</button>
+                                     <button onClick={() => setConfirmReset(false)} className="flex-1 bg-slate-700 text-white px-4 py-2.5 rounded-xl text-xs font-bold hover:bg-slate-600 transition-all shadow-sm flex items-center justify-center gap-1"><Icon name="x" className="w-3 h-3" />تراجع</button>
+                                  </div>
+                               ) : (
+                                  <button onClick={() => setConfirmReset(true)} className="bg-slate-800 text-rose-400 border border-slate-700 px-4 py-2.5 rounded-xl flex items-center justify-center gap-1.5 hover:bg-rose-500 hover:text-white transition-all active:scale-95 text-sm font-bold shrink-0" title="مسح درجات هذا التاريخ"><Icon name="rotate-ccw" className="w-4 h-4" /> مسح التقييم</button>
+                               )}
+                           </div>
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6 text-right">
+                           <div className="bg-white p-5 rounded-2xl border border-slate-200 flex justify-between items-center shadow-sm card-shadow text-right">
+                              <div><p className="text-xs font-black text-slate-500 uppercase tracking-widest mb-1">نسبة إنجاز التقييم</p><h4 className="text-2xl font-black text-slate-800">
+                                {calculateFormCompletion(selectedEmployee.id, activePeriod)}%
+                              </h4></div>
+                              <div className="w-12 h-12 shrink-0 rounded-full border-4 border-slate-100 flex items-center justify-center relative bg-slate-50"><Icon name="check-circle" className={`w-6 h-6 ${calculateFormCompletion(selectedEmployee.id, activePeriod) === 100 ? 'text-emerald-500' : 'text-slate-300'}`} /></div>
+                           </div>
+                           <div className={`p-5 rounded-2xl border flex justify-between items-center shadow-sm card-shadow ${calculateTotalScore(selectedEmployee.id, activePeriod) == 0 ? 'bg-white border-slate-200' : 'bg-slate-900 border-slate-800 text-white'}`}>
+                              <div><p className="text-xs font-black text-slate-400 uppercase tracking-widest mb-1">المعدل العام للفترة</p><div className="flex items-baseline gap-1"><h4 className={`text-3xl font-black ${getScoreColor(parseFloat(calculateTotalScore(selectedEmployee.id, activePeriod)))}`}>{calculateTotalScore(selectedEmployee.id, activePeriod)}</h4><span className="text-slate-500 font-bold text-sm">/ 5.0</span></div></div>
+                              <div className={`w-12 h-12 shrink-0 rounded-xl flex items-center justify-center bg-white/10 text-white`}><Icon name="trending-up" className="w-6 h-6" /></div>
+                           </div>
+                        </div>
+
+                        <div className="grid grid-cols-1 gap-6 text-right">
+                          <div className="bg-white rounded-3xl border border-slate-200 overflow-hidden card-shadow">
+                            <div className="p-5 border-b border-slate-100 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 bg-slate-50/80">
+                               <div className="flex items-center gap-3 text-right"><div className="w-10 h-10 shrink-0 bg-blue-100 text-blue-600 rounded-lg flex items-center justify-center"><Icon name="file-text" className="w-5 h-5" /></div><h4 className="font-black text-slate-800 text-lg">التقارير والمخرجات</h4></div>
+                               <div className="flex items-center gap-2 bg-white px-4 py-1.5 rounded-lg border border-slate-200 shadow-sm text-sm"><span className="font-bold text-slate-500">معدل الإنجاز:</span><span className="font-black text-blue-600">{calculateCategoryProgress(selectedEmployee.id, activePeriod, 'reports')}%</span></div>
+                            </div>
+                            <div className="p-5 grid grid-cols-1 lg:grid-cols-2 gap-3 bg-slate-50/30 text-right">
+                               {(selectedEmployee?.reports?.[activePeriod] || []).length === 0 ? (<div className="col-span-full text-center py-6 text-slate-400 font-bold bg-white rounded-xl border border-dashed border-slate-300 text-sm">لا توجد مخرجات مسجلة في هذا التوقيت.</div>) : (
+                                 (selectedEmployee?.reports?.[activePeriod] || []).map((report, idx) => {
+                                   const currentScore = getScore(selectedEmployee.id, activePeriod, dateKeys[activePeriod], 'reports', report);
+                                   return (<div key={idx} className="group p-4 bg-white rounded-xl border border-slate-200 flex flex-col sm:flex-row justify-between items-center gap-3 hover:border-blue-300 hover:shadow-md transition-all duration-200 text-right"><span className="font-bold text-slate-700 text-sm flex-1 text-right">{report}</span><div className="flex items-center gap-0.5 bg-slate-50 px-2 py-1 rounded-lg border border-slate-100 star-container shrink-0">{[1, 2, 3, 4, 5].map(star => (<button key={star} onClick={() => handleRate(selectedEmployee.id, 'reports', report, star)} className={`p-1 star-btn ${currentScore >= star ? 'text-amber-500' : 'text-slate-300'}`}><Icon name="star" className={`w-6 h-6 ${currentScore >= star ? 'fill-current' : ''}`} /></button>))}</div></div>)
+                                 })
+                               )}
+                            </div>
+                          </div>
+
+                          <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 text-right">
+                            {(selectedEmployee?.competenceFramework || []).map((cat, catIdx) => (
+                              <div key={cat?.id || catIdx} className="bg-white rounded-3xl border border-slate-200 overflow-hidden card-shadow flex flex-col">
+                                 <div className="p-5 border-b border-slate-100 flex justify-between items-center bg-slate-50/80 text-right"><div className="flex items-center gap-3"><div className={`w-8 h-8 shrink-0 rounded-lg flex items-center justify-center text-white bg-emerald-500 shadow-sm`}><Icon name="award" className="w-4 h-4" /></div><h4 className="font-black text-slate-800 text-base">{cat?.category}</h4></div><div className="bg-white px-3 py-1 rounded-md border border-slate-200 text-xs font-black text-slate-600 shadow-sm">{calculateCategoryProgress(selectedEmployee.id, activePeriod, cat?.id)}%</div></div>
+                                 <div className="p-5 space-y-3 flex-1 bg-slate-50/30 text-right">{(cat?.criteria || []).map((crit, idx) => {
+                                      const currentScore = getScore(selectedEmployee.id, activePeriod, dateKeys[activePeriod], cat?.id, crit);
+                                      return (<div key={idx} className="p-4 bg-white rounded-xl border border-slate-200 hover:border-blue-300 hover:shadow-sm transition-all flex flex-col sm:flex-row justify-between items-center gap-3 text-right"><span className="text-sm font-bold text-slate-700 text-right flex-1 leading-relaxed">{crit}</span><div className="flex items-center gap-0.5 bg-slate-50 px-2 py-1 rounded-lg border border-slate-100 star-container shrink-0">{[1, 2, 3, 4, 5].map(star => (<button key={star} onClick={() => handleRate(selectedEmployee.id, cat.id, crit, star)} className={`p-1 star-btn ${currentScore >= star ? 'text-amber-500' : 'text-slate-200'}`}><Icon name="star" className={`w-5 h-5 sm:w-6 sm:h-6 ${currentScore >= star ? 'fill-current' : ''}`} /></button>))}</div></div>)
+                                    })}</div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* شاشة: ملخص الأداء */}
+                    {activeView === 'summary' && (
+                      <div className="animate-in fade-in slide-in-from-bottom-4 duration-500 space-y-6 text-right">
+                         <div className="bg-gradient-to-r from-emerald-600 to-teal-800 rounded-3xl p-8 md:p-10 text-white shadow-xl relative overflow-hidden flex flex-col md:flex-row items-center justify-between card-shadow">
+                             <div className="absolute top-0 right-0 w-full h-full bg-black/10 pointer-events-none"></div>
+                             <div className="relative z-10 text-center md:text-right mb-6 md:mb-0"><span className="bg-emerald-800/50 text-emerald-100 px-3 py-1 rounded-full text-[10px] font-black uppercase mb-3 inline-block border border-emerald-500/30 shadow-inner">Executive Summary</span><h2 className="text-2xl md:text-3xl font-black mb-2 tracking-tight text-center md:text-right">المتوسط التراكمي</h2><p className="text-emerald-100 text-sm font-bold opacity-90 text-center md:text-right">متوسط كافة التقييمات المحفوظة بالمرجع</p></div>
+                             <div className="relative z-10 bg-white/10 backdrop-blur-md p-6 md:p-8 rounded-2xl border border-white/20 text-center min-w-[180px] shadow-inner shrink-0"><div className="flex items-baseline justify-center gap-1"><span className="text-5xl md:text-6xl font-black">{calculateGrandTotalAverage(selectedEmployee.id)}</span><span className="text-emerald-200 font-bold text-xl md:text-2xl">/ 5</span></div><p className="text-xs font-bold text-white mt-2 opacity-90">النتيجة النهائية للموظف</p></div>
+                         </div>
+                         
+                         <div className="bg-[#0F172A] rounded-3xl p-8 md:p-10 text-white relative overflow-hidden text-right shadow-xl border border-slate-800 card-shadow">
+                            <div className="absolute top-0 right-0 w-full h-full bg-gradient-to-br from-blue-900/10 to-transparent pointer-events-none"></div>
+                            <div className="relative z-10 flex flex-col md:flex-row items-center justify-between gap-4 mb-8">
+                               <h2 className="text-xl md:text-2xl font-black text-white flex items-center gap-2"><Icon name="calendar-days" className="w-5 h-5 text-blue-400" /> المتوسطات الدورية</h2>
+                               <button onClick={handleExportSummary} disabled={isExporting} className="bg-emerald-500 text-white px-6 py-2.5 rounded-xl flex items-center justify-center gap-2 hover:bg-emerald-600 transition-all active:scale-95 text-sm font-black w-full md:w-auto shrink-0 shadow-md border border-emerald-400">
+                                  {isExporting ? <Icon name="loader-2" className="w-4 h-4 animate-spin" /> : <Icon name="file-spreadsheet" className="w-4 h-4" />} استخراج Excel
+                               </button>
+                            </div>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 relative z-10">
+                               {['daily', 'weekly', 'monthly', 'yearly'].map(p => { 
+                                  const avg = calculateHistoricalAverage(selectedEmployee.id, p); 
+                                  const count = getArchivedCount(selectedEmployee.id, p);
+                                  return (
+                                     <div key={p} onClick={() => setActivePeriod(p)} className={`p-6 rounded-2xl border text-center shadow-inner transition-colors duration-300 cursor-pointer ${activePeriod === p ? 'bg-blue-900/50 border-blue-500/50 ring-1 ring-blue-500/50' : 'bg-[#1E293B] border-slate-700/50 hover:bg-slate-800'}`}>
+                                        <p className="text-xs font-black text-blue-200 uppercase tracking-widest mb-3 bg-slate-900/50 inline-block px-3 py-1 rounded-lg">متوسط {p === 'daily' ? 'يومي' : p === 'weekly' ? 'أسبوعي' : p === 'monthly' ? 'شهري' : 'سنوي'}</p>
+                                        <h3 className={`text-4xl font-black mb-2 ${avg == 0 ? 'text-white' : getScoreColor(parseFloat(avg))}`}>{avg}</h3>
+                                        <p className="text-[11px] font-bold text-slate-400">سجل: {count} تقييم</p>
+                                     </div>
+                                  ) 
+                               })}
+                            </div>
+                         </div>
+                         
+                         <div className="flex items-center gap-2 mt-8 mb-2">
+                             <Icon name="bar-chart" className="w-5 h-5 text-slate-400" />
+                             <h3 className="text-lg font-black text-slate-700">متوسطات عناصر التقييم للسجل ({activePeriod === 'daily' ? 'اليومي' : activePeriod === 'weekly' ? 'الأسبوعي' : activePeriod === 'monthly' ? 'الشهري' : 'السنوي'})</h3>
+                         </div>
+                         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 text-right">
+                             <div className="bg-white p-6 rounded-3xl border border-slate-200 card-shadow flex flex-col items-center justify-center text-center hover:border-blue-300 transition-colors">
+                                 <div className="w-12 h-12 bg-blue-50 text-blue-600 rounded-xl flex items-center justify-center mb-4"><Icon name="file-text" className="w-6 h-6" /></div>
+                                 <h4 className="font-black text-slate-800 text-sm mb-1">التقارير والمخرجات</h4>
+                                 <p className="text-[10px] text-slate-400 font-bold mb-4 uppercase tracking-widest">المتوسط التراكمي</p>
+                                 <span className="text-3xl font-black text-blue-600 mt-auto">{getHistoricalCategoryAvg(selectedEmployee.id, activePeriod, 'reports')} <span className="text-sm text-slate-300">/ 5</span></span>
+                             </div>
+                             {(selectedEmployee?.competenceFramework || []).map((cat, catIdx) => (
+                                 <div key={cat?.id || catIdx} className="bg-white p-6 rounded-3xl border border-slate-200 card-shadow flex flex-col items-center justify-center text-center hover:border-emerald-300 transition-colors">
+                                     <div className="w-12 h-12 bg-emerald-50 text-emerald-600 rounded-xl flex items-center justify-center mb-4"><Icon name="award" className="w-6 h-6" /></div>
+                                     <h4 className="font-black text-slate-800 text-sm mb-1">{cat?.category}</h4>
+                                     <p className="text-[10px] text-slate-400 font-bold mb-4 uppercase tracking-widest">المتوسط التراكمي</p>
+                                     <span className="text-3xl font-black text-slate-700 mt-auto">{getHistoricalCategoryAvg(selectedEmployee.id, activePeriod, cat?.id)} <span className="text-sm text-slate-300">/ 5</span></span>
+                                 </div>
+                             ))}
+                         </div>
+                      </div>
+                    )}
+
+                    {/* شاشة: السجل الزمني */}
+                    {activeView === 'timeline' && (
+                      <div className="animate-in fade-in slide-in-from-bottom-4 duration-500 space-y-6 text-right">
+                         <div className="bg-slate-900 rounded-3xl p-3 mb-6 flex flex-col md:flex-row items-center justify-between gap-4 shadow-lg border border-slate-800 print-hidden text-right">
+                           <div className="flex items-center gap-3 w-full md:w-auto overflow-x-auto hide-scrollbar">
+                              <span className="text-xs font-black text-slate-400 uppercase tracking-widest px-3 border-l border-slate-700 whitespace-nowrap"><Icon name="calendar-clock" className="w-4 h-4 inline ml-1"/> مصفوفة السجل:</span>
+                              <div className="flex bg-white/10 p-1 rounded-2xl w-full md:w-auto overflow-x-auto hide-scrollbar">
+                                 {['daily', 'weekly', 'monthly', 'yearly'].map(p => (<button key={p} onClick={() => setActivePeriod(p)} className={`px-5 py-2 rounded-xl flex items-center gap-2 font-bold text-sm transition-all whitespace-nowrap ${activePeriod === p ? 'bg-blue-600 text-white shadow-md' : 'text-slate-400 hover:bg-white/10 hover:text-white'}`}>{p === 'daily' ? 'يومي' : p === 'weekly' ? 'أسبوعي' : p === 'monthly' ? 'شهري' : 'سنوي'}</button>))}
+                              </div>
+                           </div>
+                           <button onClick={handleExportTimeline} disabled={isExporting} className="bg-emerald-500 text-white px-5 py-2.5 rounded-xl flex items-center justify-center gap-2 hover:bg-emerald-600 transition-all text-sm font-bold whitespace-nowrap shrink-0 shadow-md w-full md:w-auto">{isExporting ? <Icon name="loader-2" className="w-4 h-4 animate-spin" /> : <Icon name="file-spreadsheet" className="w-4 h-4" />} التصدير الشامل (Excel)</button>
+                         </div>
+                         
+                         {(() => {
+                            const empRecord = assessments?.[selectedEmployee.id]?.[activePeriod] || {};
+                            const dates = Object.keys(empRecord).sort((a,b) => new Date(a) - new Date(b));
+                            
+                            if (dates.length === 0) {
+                               return (
+                                  <div className="bg-white rounded-3xl p-16 text-center border border-slate-200 card-shadow print:border-none print:shadow-none">
+                                     <div className="w-20 h-20 bg-slate-50 rounded-2xl flex items-center justify-center mx-auto mb-6 print-hidden border border-slate-100"><Icon name="calendar-x" className="w-10 h-10 text-slate-300" /></div>
+                                     <h3 className="text-xl font-black text-slate-600 mb-2">لا توجد سجلات محفوظة لهذه الفترة</h3>
+                                     <p className="text-slate-400 text-sm">قم برصد التقييمات في التواريخ المختلفة لتظهر هنا كمصفوفة مقارنة زمنية.</p>
+                                  </div>
+                               )
+                            }
+
+                            const reportCriteria = selectedEmployee.reports[activePeriod] || [];
+                            let totalCriteriaCount = reportCriteria.length;
+                            (selectedEmployee.competenceFramework || []).forEach(cat => totalCriteriaCount += (cat?.criteria || []).length);
+
+                            return (
+                               <div className="bg-white rounded-3xl border border-slate-200 overflow-hidden card-shadow relative print:rounded-none print:shadow-none print:border-none print:overflow-visible">
+                                  <div className="overflow-x-auto hide-scrollbar print:overflow-visible" style={{ direction: 'rtl' }}>
+                                     <table className="w-full text-right border-collapse min-w-[800px] print:w-full">
+                                        <thead>
+                                           <tr className="bg-slate-900 text-white print:bg-slate-200 print:text-slate-900 print:border-b-2 print:border-slate-500">
+                                              <th className="p-4 whitespace-nowrap sticky right-0 bg-slate-900 print:bg-transparent print:border-r z-20 border-l border-slate-700 shadow-[-5px_0_15px_rgba(0,0,0,0.2)] print:shadow-none text-xs font-black">بنود ومحاور التقييم</th>
+                                              {dates.map(d => <th key={d} className="p-4 text-center font-black min-w-[100px] border-l border-slate-800 print:border-slate-300 text-xs">{d}</th>)}
+                                              <th className="p-4 text-center font-black min-w-[100px] bg-slate-800 text-blue-200 border-r border-slate-700 text-xs print:bg-slate-300 print:text-slate-900">المتوسط</th>
+                                           </tr>
+                                        </thead>
+                                        <tbody>
+                                           {reportCriteria.length > 0 && (
+                                              <React.Fragment>
+                                                 <tr className="bg-blue-50 print:bg-white border-y border-blue-100">
+                                                    <td className="p-2.5 px-5 font-black text-blue-800 text-xs sticky right-0 bg-blue-50 z-10 print:border-b print:border-t-2 print:border-slate-400 print:bg-transparent">التقارير والمخرجات المطلوبة (المتوسط)</td>
+                                                    {dates.map(d => {
+                                                       let dateTotal = 0; let dateCount = 0;
+                                                       reportCriteria.forEach(r => { const sc = empRecord[d]?.[`reports_${r}`]; if(sc) { dateTotal += sc; dateCount++; } });
+                                                       const dateAvg = dateCount > 0 ? dateTotal/dateCount : 0;
+                                                       return <td key={d} className="p-2.5 text-center font-bold text-blue-700 text-xs border-l border-blue-100/50 print:border-slate-300 bg-blue-50/50">{dateAvg > 0 ? dateAvg.toFixed(1) : '-'}</td>
+                                                    })}
+                                                    {(() => {
+                                                       let allTotal = 0; let allCount = 0;
+                                                       dates.forEach(d => reportCriteria.forEach(r => { const sc = empRecord[d]?.[`reports_${r}`]; if(sc) { allTotal += sc; allCount++; } }));
+                                                       const allAvg = allCount > 0 ? allTotal/allCount : 0;
+                                                       return <td className="p-2.5 text-center font-black text-blue-800 text-xs bg-blue-100/50 border-r border-blue-100 print:bg-slate-100 print:border-slate-300">{allAvg > 0 ? allAvg.toFixed(1) : '-'}</td>
+                                                    })()}
+                                                 </tr>
+                                                 {reportCriteria.map(r => {
+                                                    let rowTotal = 0; let rowCount = 0;
+                                                    return (
+                                                       <tr key={r} className="border-b border-slate-100 hover:bg-slate-50 transition-colors print:border-slate-300">
+                                                          <td className="p-3 px-5 font-bold text-xs text-slate-700 sticky right-0 bg-white group-hover:bg-slate-50 border-l border-slate-200 z-10 shadow-[-5px_0_10px_rgba(0,0,0,0.02)] print:shadow-none">{r}</td>
+                                                          {dates.map(d => {
+                                                             const score = empRecord[d]?.[`reports_${r}`];
+                                                             if(score) { rowTotal += score; rowCount++; }
+                                                             return <td key={d} className="p-3 text-center border-l border-slate-50 print:border-slate-200"><span className={`font-black text-sm ${getScoreColor(score)}`}>{score || '-'}</span></td>
+                                                          })}
+                                                          <td className="p-3 text-center bg-slate-50 border-r border-slate-200 print:bg-slate-100 print:border-slate-300"><span className={`font-black text-sm ${getScoreColor(rowCount > 0 ? rowTotal/rowCount : 0)}`}>{rowCount > 0 ? (rowTotal/rowCount).toFixed(1) : '-'}</span></td>
+                                                       </tr>
+                                                    )
+                                                 })}
+                                              </React.Fragment>
+                                           )}
+                                           {(selectedEmployee.competenceFramework || []).map((cat, catIdx) => (
+                                              <React.Fragment key={cat?.id || catIdx}>
+                                                 <tr className="bg-slate-100 print:bg-white border-y border-slate-200">
+                                                    <td className="p-2.5 px-5 font-black text-slate-700 text-xs sticky right-0 bg-slate-100 z-10 print:border-b print:border-t-2 print:border-slate-400 print:bg-transparent">{cat?.category} (المتوسط)</td>
+                                                    {dates.map(d => {
+                                                        let dateTotal = 0; let dateCount = 0;
+                                                        (cat?.criteria || []).forEach(crit => { const sc = empRecord[d]?.[`${cat.id}_${crit}`]; if(sc) { dateTotal += sc; dateCount++; } });
+                                                        const dateAvg = dateCount > 0 ? dateTotal/dateCount : 0;
+                                                        return <td key={d} className="p-2.5 text-center font-bold text-slate-600 text-xs border-l border-slate-200/50 print:border-slate-300 bg-slate-100/50">{dateAvg > 0 ? dateAvg.toFixed(1) : '-'}</td>
+                                                    })}
+                                                    {(() => {
+                                                        let allTotal = 0; let allCount = 0;
+                                                        dates.forEach(d => (cat?.criteria || []).forEach(crit => { const sc = empRecord[d]?.[`${cat.id}_${crit}`]; if(sc) { allTotal += sc; allCount++; } }));
+                                                        const allAvg = allCount > 0 ? allTotal/allCount : 0;
+                                                        return <td className="p-2.5 text-center font-black text-slate-700 text-xs bg-slate-200/50 border-r border-slate-200 print:bg-slate-100 print:border-slate-300">{allAvg > 0 ? allAvg.toFixed(1) : '-'}</td>
+                                                    })()}
+                                                 </tr>
+                                                 {(cat?.criteria || []).map((crit, critIdx) => {
+                                                    let rowTotal = 0; let rowCount = 0;
+                                                    return (
+                                                       <tr key={critIdx} className="border-b border-slate-100 hover:bg-slate-50 transition-colors group print:border-slate-300">
+                                                          <td className="p-3 px-5 font-bold text-xs text-slate-600 sticky right-0 bg-white group-hover:bg-slate-50 border-l border-slate-200 z-10 shadow-[-5px_0_10px_rgba(0,0,0,0.02)] print:shadow-none">{crit}</td>
+                                                          {dates.map(d => {
+                                                             const score = empRecord[d]?.[`${cat.id}_${crit}`];
+                                                             if(score) { rowTotal += score; rowCount++; }
+                                                             return <td key={d} className="p-3 text-center border-l border-slate-50 print:border-slate-200"><span className={`font-black text-sm ${getScoreColor(score)}`}>{score || '-'}</span></td>
+                                                          })}
+                                                          <td className="p-3 text-center bg-slate-50 border-r border-slate-200 print:bg-slate-100 print:border-slate-300"><span className={`font-black text-sm ${getScoreColor(rowCount > 0 ? rowTotal/rowCount : 0)}`}>{rowCount > 0 ? (rowTotal/rowCount).toFixed(1) : '-'}</span></td>
+                                                       </tr>
+                                                    )
+                                                 })}
+                                              </React.Fragment>
+                                           ))}
+                                           
+                                           {/* صف المعدل العام داخل الشاشة */}
+                                           <tr className="bg-emerald-50/80 border-t-2 border-emerald-200 print:bg-emerald-50 print:border-emerald-600">
+                                              <td className="p-4 px-5 font-black text-emerald-900 text-xs sticky right-0 bg-emerald-50/95 backdrop-blur-sm border-l border-emerald-200 z-10 shadow-[-5px_0_10px_rgba(0,0,0,0.02)] print:shadow-none print:bg-transparent">
+                                                 <div className="flex items-center gap-2"><Icon name="calculator" className="w-4 h-4 print-hidden shrink-0" /> المعدل العام للفترة</div>
+                                              </td>
+                                              {(() => {
+                                                 let grandTotalOfAverages = 0; let grandCount = 0;
+                                                 const dateCells = dates.map(d => {
+                                                    let total = 0;
+                                                    reportCriteria.forEach(r => { if(empRecord[d]?.[`reports_${r}`]) total += empRecord[d][`reports_${r}`] });
+                                                    (selectedEmployee.competenceFramework || []).forEach(c => (c?.criteria || []).forEach(cr => { if(empRecord[d]?.[`${c.id}_${cr}`]) total += empRecord[d][`${c.id}_${cr}`] }));
+                                                    const avg = totalCriteriaCount > 0 ? (total/totalCriteriaCount) : 0;
+                                                    if(avg > 0) { grandTotalOfAverages += avg; grandCount++; }
+                                                    return <td key={d} className="p-4 text-center border-l border-emerald-100 bg-emerald-50/30 print:bg-transparent print:border-emerald-300"><span className={`font-black text-sm ${getScoreColor(avg)}`}>{avg > 0 ? avg.toFixed(2) : "0.00"}</span></td>
+                                                 });
+                                                 const finalGrandAvg = grandCount > 0 ? (grandTotalOfAverages/grandCount) : 0;
+                                                 return (
+                                                    <React.Fragment>
+                                                       {dateCells}
+                                                       <td className="p-4 text-center bg-emerald-100/50 border-r border-emerald-200 print:bg-emerald-100 print:border-emerald-600"><span className={`font-black text-base ${getScoreColor(finalGrandAvg)}`}>{finalGrandAvg > 0 ? finalGrandAvg.toFixed(2) : "0.00"}</span></td>
+                                                    </React.Fragment>
+                                                 );
+                                              })()}
+                                           </tr>
+                                        </tbody>
+                                     </table>
+                                  </div>
+                               </div>
+                            )
+                         })()}
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="h-full flex flex-col items-center justify-center text-slate-300 gap-6 py-20 px-6 animate-pop">
+                     <div className="relative"><div className="absolute inset-0 bg-blue-100 rounded-full blur-3xl opacity-50 animate-pulse"></div><div className="w-32 h-32 bg-white rounded-full shadow-2xl border border-slate-100 flex items-center justify-center relative z-10"><Icon name="layout-dashboard" className="w-12 h-12 text-blue-400" /></div></div>
+                     <div className="text-center px-10 max-w-xl mx-auto text-right">
+                        <p className="text-2xl md:text-3xl font-black text-slate-500 mb-3 tracking-tighter text-center">أداة التقييم الشامل للموظفين</p>
+                        <p className="font-bold text-slate-400 text-sm md:text-base leading-relaxed text-center">الرجاء اختيار أحد أعضاء الفريق من القائمة الجانبية لبدء استعراض أرشيف الأداء والتقييمات، أو تخصيص الإعدادات من الأزرار العلوية.</p>
+                     </div>
+                  </div>
+                )}
+              </main>
+            </div>
+          );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
